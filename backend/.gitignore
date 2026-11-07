@@ -7,5 +7,7 @@ notes.md
 .env.*
 .env.local
 *.env
+!*.env.example
+!.env.example
 
 *.pdf
