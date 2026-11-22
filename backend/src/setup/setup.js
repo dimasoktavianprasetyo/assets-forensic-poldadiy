@@ -1,5 +1,6 @@
 require('dotenv').config({ path: '.env' });
 require('dotenv').config({ path: '.env.local' });
+require('../mysqlAdapter');
 const { globSync } = require('glob');
 const fs = require('fs');
 const { generate: uniqueId } = require('shortid');

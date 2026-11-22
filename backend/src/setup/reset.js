@@ -1,5 +1,6 @@
 require('dotenv').config({ path: '.env' });
 require('dotenv').config({ path: '.env.local' });
+require('../mysqlAdapter');
 
 const mongoose = require('mongoose');
 mongoose.connect(process.env.DATABASE);
