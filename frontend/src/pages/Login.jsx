@@ -51,15 +51,18 @@ const LoginPage = () => {
               loading={isLoading}
               size="large"
             >
-              {translate('Log in')}
+              Masuk
             </Button>
+            <div style={{ marginTop: 12, textAlign: 'center', fontSize: 12, color: '#64748b' }}>
+              Lupa kata sandi? Hubungi Admin Subbagrenmin untuk reset akun.
+            </div>
           </Form.Item>
         </Form>
       </Loading>
     );
   };
 
-  return <AuthModule authContent={<FormContainer />} AUTH_TITLE="Sign in" />;
+  return <AuthModule authContent={<FormContainer />} AUTH_TITLE="Masuk Sistem" />;
 };
 
 export default LoginPage;

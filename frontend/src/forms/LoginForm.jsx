@@ -9,14 +9,16 @@ export default function LoginForm() {
   return (
     <div>
       <Form.Item
-        label={translate('email')}
+        label="Username / Email"
         name="email"
         rules={[
           {
             required: true,
+            message: 'Username / Email wajib diisi',
           },
           {
             type: 'email',
+            message: 'Format email tidak valid',
           },
         ]}
       >
@@ -28,11 +30,12 @@ export default function LoginForm() {
         />
       </Form.Item>
       <Form.Item
-        label={translate('password')}
+        label="Kata Sandi"
         name="password"
         rules={[
           {
             required: true,
+            message: 'Kata sandi wajib diisi',
           },
         ]}
       >
@@ -45,10 +48,10 @@ export default function LoginForm() {
 
       <Form.Item>
         <Form.Item name="remember" valuePropName="checked" noStyle>
-          <Checkbox>{translate('Remember me')}</Checkbox>
+          <Checkbox>Ingat Saya</Checkbox>
         </Form.Item>
         <a className="login-form-forgot" href="/forgetpassword" style={{ marginLeft: '0px' }}>
-          {translate('Forgot password')}
+          Lupa Kata Sandi?
         </a>
       </Form.Item>
     </div>

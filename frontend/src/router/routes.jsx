@@ -1,103 +1,49 @@
 import { lazy } from 'react';
-
 import { Navigate } from 'react-router-dom';
 
 const Logout = lazy(() => import('@/pages/Logout.jsx'));
 const NotFound = lazy(() => import('@/pages/NotFound.jsx'));
-
-
-const Customer = lazy(() => import('@/pages/Customer'));
-const Invoice = lazy(() => import('@/pages/Invoice'));
-const InvoiceCreate = lazy(() => import('@/pages/Invoice/InvoiceCreate'));
-
-const InvoiceRead = lazy(() => import('@/pages/Invoice/InvoiceRead'));
-const InvoiceUpdate = lazy(() => import('@/pages/Invoice/InvoiceUpdate'));
-const InvoiceRecordPayment = lazy(() => import('@/pages/Invoice/InvoiceRecordPayment'));
-
-const Payment = lazy(() => import('@/pages/Payment/index'));
-const PaymentRead = lazy(() => import('@/pages/Payment/PaymentRead'));
-const PaymentUpdate = lazy(() => import('@/pages/Payment/PaymentUpdate'));
-
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const Settings = lazy(() => import('@/pages/Settings/Settings'));
-
-
 const Profile = lazy(() => import('@/pages/Profile'));
 
-const About = lazy(() => import('@/pages/About'));
+const Satker = lazy(() => import('@/pages/MasterData/Satker'));
+const Personel = lazy(() => import('@/pages/MasterData/Personel'));
+const KategoriAset = lazy(() => import('@/pages/MasterData/KategoriAset'));
+const LokasiPenempatan = lazy(() => import('@/pages/MasterData/LokasiPenempatan'));
+const VendorPelaksana = lazy(() => import('@/pages/MasterData/VendorPelaksana'));
+const AsetTik = lazy(() => import('@/pages/AsetTik'));
+const Sirkulasi = lazy(() => import('@/pages/Sirkulasi'));
+const Pemeliharaan = lazy(() => import('@/pages/Pemeliharaan'));
+const Rekonsiliasi = lazy(() => import('@/pages/Rekonsiliasi'));
+const KMeansAnalytics = lazy(() => import('@/pages/KMeansAnalytics'));
+const EarlyWarning = lazy(() => import('@/pages/EarlyWarning'));
+const Laporan = lazy(() => import('@/pages/Laporan'));
+const ManajemenUser = lazy(() => import('@/pages/ManajemenUser'));
 
 let routes = {
   expense: [],
   default: [
-    {
-      path: '/login',
-      element: <Navigate to="/" />,
-    },
-    {
-      path: '/logout',
-      element: <Logout />,
-    },
-    {
-      path: '/about',
-      element: <About />,
-    },
-    {
-      path: '/',
-      element: <Invoice />,
-    },
-    {
-      path: '/customer',
-      element: <Customer />,
-    },
-
-    {
-      path: '/invoice',
-      element: <Invoice />,
-    },
-    {
-      path: '/invoice/create',
-      element: <InvoiceCreate />,
-    },
-    {
-      path: '/invoice/read/:id',
-      element: <InvoiceRead />,
-    },
-    {
-      path: '/invoice/update/:id',
-      element: <InvoiceUpdate />,
-    },
-    {
-      path: '/invoice/pay/:id',
-      element: <InvoiceRecordPayment />,
-    },
-    {
-      path: '/payment',
-      element: <Payment />,
-    },
-    {
-      path: '/payment/read/:id',
-      element: <PaymentRead />,
-    },
-    {
-      path: '/payment/update/:id',
-      element: <PaymentUpdate />,
-    },
-
-    {
-      path: '/settings',
-      element: <Settings />,
-    },
-    {
-      path: '/settings/edit/:settingsKey',
-      element: <Settings />,
-    },
-    {
-      path: '/profile',
-      element: <Profile />,
-    },
-    {
-      path: '*',
-      element: <NotFound />,
-    },
+    { path: '/login', element: <Navigate to="/" /> },
+    { path: '/logout', element: <Logout /> },
+    { path: '/', element: <Dashboard /> },
+    { path: '/master/satker', element: <Satker /> },
+    { path: '/master/personel', element: <Personel /> },
+    { path: '/master/kategori', element: <KategoriAset /> },
+    { path: '/master/lokasi', element: <LokasiPenempatan /> },
+    { path: '/master/vendor', element: <VendorPelaksana /> },
+    { path: '/aset-tik', element: <AsetTik /> },
+    { path: '/sirkulasi', element: <Sirkulasi /> },
+    { path: '/pemeliharaan', element: <Pemeliharaan /> },
+    { path: '/rekonsiliasi', element: <Rekonsiliasi /> },
+    { path: '/kmeans-analytics', element: <KMeansAnalytics /> },
+    { path: '/early-warning', element: <EarlyWarning /> },
+    { path: '/laporan', element: <Laporan /> },
+    { path: '/manajemen-user', element: <ManajemenUser /> },
+    { path: '/settings', element: <Settings /> },
+    { path: '/settings/edit/:settingsKey', element: <Settings /> },
+    { path: '/profile', element: <Profile /> },
+    { path: '*', element: <NotFound /> },
   ],
 };
 
