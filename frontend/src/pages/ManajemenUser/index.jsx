@@ -32,22 +32,31 @@ const AUDIT_LOGS = [
 
 export default function ManajemenUserPage() {
   const [users, setUsers] = useState(INITIAL_USERS);
+  const [auditLogs, setAuditLogs] = useState(AUDIT_LOGS);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [form] = Form.useForm();
 
   useEffect(() => {
-    const loadUsers = async () => {
+    const loadUsersAndLogs = async () => {
       try {
         const res = await request.list({ entity: 'users' });
         if (res?.success && Array.isArray(res?.result) && res.result.length > 0) {
           setUsers(res.result);
         }
       } catch {
-        // Fallback ke daftar lokal sebelum endpoint /api/users dibuat
+        // Fallback ke daftar lokal
+      }
+      try {
+        const logRes = await request.get({ entity: 'logs' });
+        if (logRes?.success && Array.isArray(logRes?.result)) {
+          setAuditLogs(logRes.result);
+        }
+      } catch {
+        // Fallback log lokal
       }
     };
-    loadUsers();
+    loadUsersAndLogs();
   }, []);
 
   const openCreateModal = () => {
@@ -190,7 +199,7 @@ export default function ManajemenUserPage() {
       children: (
         <Table
           rowKey="id"
-          dataSource={AUDIT_LOGS}
+          dataSource={auditLogs}
           columns={[
             { title: 'Waktu (DD/MM/YYYY)', dataIndex: 'waktu' },
             { title: 'Pengguna', dataIndex: 'user' },

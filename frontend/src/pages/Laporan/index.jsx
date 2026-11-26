@@ -1,5 +1,6 @@
 import { Button, Card, Col, Row, message } from 'antd';
 import { FilePdfOutlined } from '@ant-design/icons';
+import { API_BASE_URL } from '@/config/serverApiConfig';
 
 const LAPORAN_LIST = [
   {
@@ -27,7 +28,7 @@ const LAPORAN_LIST = [
 export default function LaporanPage() {
   const handleDownload = (jenis, title) => {
     message.info(`Menyiapkan ekspor PDF berkop BID TIK Polda DIY: ${title}`);
-    window.open(`/api/laporan/pdf/${jenis}`, '_blank');
+    window.open(`${API_BASE_URL}laporan/pdf/${jenis}`, '_blank');
   };
 
   return (

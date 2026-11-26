@@ -32,7 +32,10 @@ for (const filePath of modelsFiles) {
   require(path.resolve(filePath));
 }
 
+const { initDatabase } = require('./database/initDb');
+
 // Start our app!
+initDatabase().catch((err) => console.error('DB Init Error:', err.message));
 const app = require('./app');
 app.set('port', process.env.PORT || 8888);
 const server = app.listen(app.get('port'), () => {

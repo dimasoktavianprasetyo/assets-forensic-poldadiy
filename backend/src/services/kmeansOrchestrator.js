@@ -1,0 +1,242 @@
+const { spawn } = require('child_process');
+const path = require('path');
+const { getPool } = require('../config/db');
+
+// Perhitungan Depresiasi Garis Lurus (PMK No. 181/PMK.06/2016)
+function computeBookValue(nilaiPerolehan, masaManfaatThn, tglPerolehan) {
+  const np = Number(nilaiPerolehan || 0);
+  const mm = Math.max(1, Number(masaManfaatThn || 4));
+  const annualDep = np / mm;
+  const ageYears = Math.max(0, (Date.now() - new Date(tglPerolehan).getTime()) / (365.25 * 86400000));
+  const accumDep = Math.min(np, annualDep * ageYears);
+  const bookValue = Math.max(0, np - accumDep);
+  return { annualDep, accumDep, bookValue };
+}
+
+// Eksekusi Python Engine (kmeans_fraud.py)
+function runPythonKMeans(records, k = 3) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = path.join(__dirname, '../../python_engine/kmeans_fraud.py');
+    const py = spawn('python', [scriptPath]);
+    let stdout = '';
+    let stderr = '';
+    py.stdout.on('data', (d) => (stdout += d.toString()));
+    py.stderr.on('data', (d) => (stderr += d.toString()));
+    py.on('error', reject);
+    py.on('close', (code) => {
+      if (code !== 0) return reject(new Error(stderr || `Python exited with code ${code}`));
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    py.stdin.write(JSON.stringify({ records, k }));
+    py.stdin.end();
+  });
+}
+
+// Fallback deterministik Min-Max + K-Means Euclidean (identik dengan Python jika library Python belum terpasang)
+function runJsKMeansFallback(records, k = 3) {
+  const dims = ['x1', 'x2', 'x3'];
+  const mins = {};
+  const maxs = {};
+  for (const d of dims) {
+    const vals = records.map((r) => Number(r[d] || 0));
+    mins[d] = Math.min(...vals);
+    maxs[d] = Math.max(...vals);
+  }
+  const Xnorm = records.map((r) =>
+    dims.map((d) => (maxs[d] === mins[d] ? 0 : (Number(r[d] || 0) - mins[d]) / (maxs[d] - mins[d])))
+  );
+
+  const dist = (a, b) => Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+
+  function fitK(ki) {
+    const sortedIdx = Xnorm.map((v, i) => ({ i, norm: dist(v, [0, 0, 0]) }))
+      .sort((a, b) => a.norm - b.norm)
+      .map((o) => o.i);
+    let centroids = Array.from({ length: ki }, (_, c) => {
+      const idx = sortedIdx[Math.min(sortedIdx.length - 1, Math.floor((c * (sortedIdx.length - 1)) / Math.max(1, ki - 1)))];
+      return [...Xnorm[idx]];
+    });
+    let labels = new Array(Xnorm.length).fill(0);
+    for (let iter = 0; iter < 100; iter++) {
+      let changed = false;
+      labels = Xnorm.map((p, idx) => {
+        let best = 0;
+        let bestD = Infinity;
+        centroids.forEach((c, ci) => {
+          const dVal = dist(p, c);
+          if (dVal < bestD) {
+            bestD = dVal;
+            best = ci;
+          }
+        });
+        if (best !== labels[idx]) changed = true;
+        return best;
+      });
+      const next = Array.from({ length: ki }, (_, ci) => {
+        const members = Xnorm.filter((_, idx) => labels[idx] === ci);
+        if (members.length === 0) return centroids[ci];
+        return [0, 1, 2].map((f) => members.reduce((s, m) => s + m[f], 0) / members.length);
+      });
+      centroids = next;
+      if (!changed) break;
+    }
+    const sse = Xnorm.reduce((s, p, idx) => s + dist(p, centroids[labels[idx]]) ** 2, 0);
+    return { labels, centroids, sse };
+  }
+
+  const elbow = [];
+  for (let ki = 1; ki <= Math.min(8, Xnorm.length); ki++) {
+    elbow.push({ k: ki, sse: Number(fitK(ki).sse.toFixed(4)) });
+  }
+
+  const mainFit = fitK(Math.min(k, Xnorm.length));
+  const order = mainFit.centroids
+    .map((c, idx) => ({ idx, mag: dist(c, [0, 0, 0]) }))
+    .sort((a, b) => a.mag - b.mag)
+    .map((o) => o.idx);
+  const labelNames = ['Normal', 'Waspada', 'Anomali / Indikasi Fraud'];
+  const riskMap = {};
+  order.forEach((cIdx, rank) => {
+    riskMap[cIdx] = labelNames[Math.min(rank, 2)];
+  });
+
+  // Hitung Silhouette Score
+  let silSum = 0;
+  Xnorm.forEach((p, i) => {
+    const same = Xnorm.filter((_, j) => j !== i && mainFit.labels[j] === mainFit.labels[i]);
+    const a = same.length ? same.reduce((s, q) => s + dist(p, q), 0) / same.length : 0;
+    let b = Infinity;
+    for (let ci = 0; ci < mainFit.centroids.length; ci++) {
+      if (ci === mainFit.labels[i]) continue;
+      const other = Xnorm.filter((_, j) => mainFit.labels[j] === ci);
+      if (other.length) {
+        const avgD = other.reduce((s, q) => s + dist(p, q), 0) / other.length;
+        if (avgD < b) b = avgD;
+      }
+    }
+    const s = b === Infinity || Math.max(a, b) === 0 ? 0 : (b - a) / Math.max(a, b);
+    silSum += s;
+  });
+
+  return {
+    nilai_k: Math.min(k, Xnorm.length),
+    sse_score: Number(mainFit.sse.toFixed(4)),
+    silhouette_score: Number((silSum / Math.max(1, Xnorm.length)).toFixed(4)),
+    elbow,
+    centroids: order.map((cIdx) => ({
+      klaster: riskMap[cIdx],
+      centroid_frekuensi: Number(mainFit.centroids[cIdx][0].toFixed(6)),
+      centroid_biaya_servis: Number(mainFit.centroids[cIdx][1].toFixed(6)),
+      centroid_durasi_pinjam: Number(mainFit.centroids[cIdx][2].toFixed(6)),
+    })),
+    items: records.map((r, i) => {
+      const n = Xnorm[i];
+      const lbl = riskMap[mainFit.labels[i]];
+      const jarak = dist(n, mainFit.centroids[mainFit.labels[i]]);
+      const risiko = Math.min(99, Math.max(5, Math.round((dist(n, [0, 0, 0]) / Math.sqrt(3)) * 100)));
+      return {
+        id_aset: r.id_aset,
+        kode_bmn: r.kode_bmn,
+        nama_perangkat: r.nama_perangkat,
+        x1_raw: r.x1,
+        x2_raw: r.x2,
+        x3_raw: r.x3,
+        x1: Number(n[0].toFixed(4)),
+        x2: Number(n[1].toFixed(4)),
+        x3: Number(n[2].toFixed(4)),
+        jarak: Number(jarak.toFixed(4)),
+        klaster: lbl,
+        risiko,
+      };
+    }),
+  };
+}
+
+async function extractAssetFeatures() {
+  const pool = await getPool();
+  const [assets] = await pool.query('SELECT * FROM aset_tik WHERE removed = 0');
+  const [maintRows] = await pool.query(
+    'SELECT id_aset, kode_bmn, COUNT(*) AS frek, COALESCE(SUM(total_biaya), 0) AS total_biaya FROM pemeliharaan_aset WHERE removed = 0 GROUP BY id_aset, kode_bmn'
+  );
+  const [circRows] = await pool.query(
+    `SELECT kode_bmn,
+      SUM(GREATEST(0, DATEDIFF(COALESCE(tgl_kembali_aktual, CURDATE()), tgl_pinjam))) AS durasi
+     FROM sirkulasi_peminjaman WHERE removed = 0 GROUP BY kode_bmn`
+  );
+
+  return assets.map((a) => {
+    const m = maintRows.find((x) => x.id_aset === a.id_aset || x.kode_bmn === a.kode_bmn);
+    const c = circRows.find((x) => x.kode_bmn === a.kode_bmn);
+    const { bookValue, annualDep } = computeBookValue(a.nilai_perolehan, a.masa_manfaat_thn, a.tgl_perolehan);
+    const denom = Math.max(bookValue > 0 ? bookValue : annualDep, 1);
+    const x1 = m ? Number(m.frek) : 0;
+    const x2 = m ? Number(m.total_biaya) / denom : 0;
+    const x3 = c ? Number(c.durasi) : 0;
+    return {
+      id_aset: a.id_aset,
+      kode_bmn: a.kode_bmn,
+      nama_perangkat: a.nama_perangkat,
+      x1,
+      x2: Number(x2.toFixed(4)),
+      x3,
+    };
+  });
+}
+
+async function executeAndPersistKMeans(idUser = 1, k = 3) {
+  const pool = await getPool();
+  const records = await extractAssetFeatures();
+  if (records.length < 3) {
+    throw new Error('Minimal 3 data aset TIK diperlukan untuk K-Means K=3');
+  }
+
+  let mlResult;
+  try {
+    mlResult = await runPythonKMeans(records, k);
+  } catch {
+    mlResult = runJsKMeansFallback(records, k);
+  }
+
+  const [anaRes] = await pool.query(
+    'INSERT INTO analisis_kmeans (nilai_k, sse_score, silhouette_score, elbow_json, id_user) VALUES (?, ?, ?, ?, ?)',
+    [mlResult.nilai_k, mlResult.sse_score, mlResult.silhouette_score, JSON.stringify(mlResult.elbow), idUser]
+  );
+  const idAnalisis = anaRes.insertId;
+
+  for (const c of mlResult.centroids) {
+    await pool.query(
+      'INSERT INTO centroid_klaster (id_analisis, klaster_label, centroid_frekuensi, centroid_biaya_servis, centroid_durasi_pinjam) VALUES (?, ?, ?, ?, ?)',
+      [idAnalisis, c.klaster, c.centroid_frekuensi, c.centroid_biaya_servis, c.centroid_durasi_pinjam]
+    );
+  }
+
+  for (const item of mlResult.items) {
+    const [hRes] = await pool.query(
+      `INSERT INTO hasil_klaster_aset (id_analisis, id_aset, x1_raw, x2_raw, x3_raw, skor_x1_norm, skor_x2_norm, skor_x3_norm, jarak_euclidean, klaster_label, probabilitas_risiko)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [idAnalisis, item.id_aset, item.x1_raw, item.x2_raw, item.x3_raw, item.x1, item.x2, item.x3, item.jarak, item.klaster, item.risiko]
+    );
+    item.id = hRes.insertId;
+
+    if (item.klaster === 'Waspada' || item.klaster.includes('Anomali')) {
+      const level = item.klaster.includes('Anomali') ? 'Merah' : 'Kuning';
+      const indikasi =
+        level === 'Merah'
+          ? `Frekuensi servis tinggi (X1=${item.x1.toFixed(2)}) & rasio biaya servis ekstrem (X2=${item.x2.toFixed(2)})`
+          : `Durasi sirkulasi / pemeliharaan meningkat (X2=${item.x2.toFixed(2)}, X3=${item.x3.toFixed(2)})`;
+      await pool.query(
+        'INSERT INTO early_warning_alert (id_hasil, id_aset, tingkat_risiko, indikasi, status_alert) VALUES (?, ?, ?, ?, ?)',
+        [hRes.insertId, item.id_aset, level, indikasi, 'Belum Diinvestigasi']
+      );
+    }
+  }
+
+  return { id_analisis: idAnalisis, ...mlResult };
+}
+
+module.exports = { computeBookValue, executeAndPersistKMeans };
+

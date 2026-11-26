@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Col, Row, Statistic, Tag, Table, Progress, Button, Space, Badge, Select } from 'antd';
 import {
@@ -31,113 +31,88 @@ import {
   Pie,
   Cell,
 } from 'recharts';
+import { request } from '@/request';
 
 const formatRupiah = (val) =>
   new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val || 0);
 
-// Data Klaster K-Means (X2 = Rasio Biaya, X1 = Frekuensi Servis, X3 = Durasi Sirkulasi)
-const normalCluster = [
-  { kode: '3100102001', nama: 'Server Dell R740', x2: 0.12, x1: 0.10, x3: 15 },
-  { kode: '3100102004', nama: 'UPS APC 3000VA', x2: 0.18, x1: 0.15, x3: 10 },
-  { kode: '3100102008', nama: 'Switch HP Aruba 2930F', x2: 0.08, x1: 0.12, x3: 12 },
-  { kode: '3100102011', nama: 'PC Workstation Lenovo', x2: 0.22, x1: 0.20, x3: 18 },
-];
-
-const waspadaCluster = [
-  { kode: '3100102014', nama: 'Switch Core Cisco 9300', x2: 0.48, x1: 0.45, x3: 35 },
-  { kode: '3100102019', nama: 'Firewall Fortigate 100F', x2: 0.55, x1: 0.50, x3: 28 },
-  { kode: '3100102022', nama: 'Access Point Ubiquiti', x2: 0.42, x1: 0.58, x3: 40 },
-];
-
-const anomaliCluster = [
-  { kode: '3100102029', nama: 'Router Mikrotik CCR1036', x2: 0.89, x1: 0.91, x3: 64 },
-  { kode: '3100102042', nama: 'Laptop ThinkPad X1', x2: 0.93, x1: 0.85, x3: 52 },
-  { kode: '3100102055', nama: 'Radio HT Digital Motorola', x2: 0.81, x1: 0.88, x3: 48 },
-];
-
-const centroidsData = [
-  { kode: 'Centroid 1 (Normal)', x2: 0.15, x1: 0.14, x3: 60 },
-  { kode: 'Centroid 2 (Waspada)', x2: 0.48, x1: 0.51, x3: 60 },
-  { kode: 'Centroid 3 (Anomali)', x2: 0.88, x1: 0.88, x3: 60 },
-];
-
-// Data Kurva Elbow (K=1..8)
-const elbowData = [
-  { k: 1, sse: 48.2 },
-  { k: 2, sse: 23.6 },
-  { k: 3, sse: 12.48 },
-  { k: 4, sse: 9.8 },
-  { k: 5, sse: 8.1 },
-  { k: 6, sse: 6.9 },
-  { k: 7, sse: 5.8 },
-  { k: 8, sse: 5.1 },
-];
-
-// Tren Biaya Pemeliharaan vs Depresiasi per Bulan (dalam Juta Rp)
-const trendData = [
-  { bulan: 'Jun', biaya_servis: 18500000, depresiasi: 28000000 },
-  { bulan: 'Jul', biaya_servis: 21000000, depresiasi: 28000000 },
-  { bulan: 'Agu', biaya_servis: 24500000, depresiasi: 28500000 },
-  { bulan: 'Sep', biaya_servis: 36800000, depresiasi: 28500000 },
-  { bulan: 'Okt', biaya_servis: 44200000, depresiasi: 29000000 },
-  { bulan: 'Nov', biaya_servis: 42500000, depresiasi: 29000000 },
-];
-
-// Kondisi Fisik BMN
-const kondisiData = [
-  { name: 'Baik (B)', value: 214, color: '#52c41a' },
-  { name: 'Rusak Ringan (RR)', value: 24, color: '#faad14' },
-  { name: 'Rusak Berat (RB)', value: 10, color: '#ff4d4f' },
-];
-
-const earlyWarningRows = [
-  {
-    key: '1',
-    kode_bmn: '3100102029',
-    perangkat: 'Router Mikrotik CCR1036',
-    nilai_buku: 12500000,
-    biaya_servis: 11200000,
-    rasio_persen: 90,
-    frekuensi_x1: 7,
-    durasi_x3: 64,
-    jarak_euclidean: 0.142,
-    indikasi: 'Mark-up Biaya & Servis Berulang',
-    level: 'Merah',
-    status_audit: 'Belum Diinvestigasi',
+const FALLBACK_SUMMARY = {
+  kpi: {
+    total_aset: 10,
+    kondisi_baik: 5,
+    dalam_servis: 3,
+    alert_count: 5,
+    total_nilai_buku: 120000000,
+    total_biaya_servis: 60100000,
   },
-  {
-    key: '2',
-    kode_bmn: '3100102042',
-    perangkat: 'Laptop Operasional ThinkPad X1',
-    nilai_buku: 18000000,
-    biaya_servis: 16800000,
-    rasio_persen: 93,
-    frekuensi_x1: 6,
-    durasi_x3: 52,
-    jarak_euclidean: 0.189,
-    indikasi: 'Rasio Biaya Servis > 90% Nilai Buku',
-    level: 'Merah',
-    status_audit: 'Belum Diinvestigasi',
+  kondisiData: [
+    { name: 'Baik (B)', value: 5, color: '#52c41a' },
+    { name: 'Rusak Ringan (RR)', value: 4, color: '#faad14' },
+    { name: 'Rusak Berat (RB)', value: 1, color: '#ff4d4f' },
+  ],
+  statusCounts: { tersedia: 4, dipinjam: 3, servis: 3 },
+  trendData: [
+    { bulan: 'Jun', biaya_servis: 5200000, depresiasi: 5000000 },
+    { bulan: 'Jul', biaya_servis: 7000000, depresiasi: 5000000 },
+    { bulan: 'Agu', biaya_servis: 8900000, depresiasi: 5000000 },
+    { bulan: 'Sep', biaya_servis: 2500000, depresiasi: 5000000 },
+    { bulan: 'Okt', biaya_servis: 4100000, depresiasi: 5000000 },
+    { bulan: 'Nov', biaya_servis: 0, depresiasi: 5000000 },
+  ],
+  kmeans: {
+    nilai_k: 3,
+    sse_score: 1.0356,
+    silhouette_score: 0.3971,
+    elbow: [],
+    centroids: [],
+    items: [],
   },
-  {
-    key: '3',
-    kode_bmn: '3100102014',
-    perangkat: 'Switch Core Cisco Catalyst 9300',
-    nilai_buku: 42000000,
-    biaya_servis: 19500000,
-    rasio_persen: 46,
-    frekuensi_x1: 4,
-    durasi_x3: 35,
-    jarak_euclidean: 0.215,
-    indikasi: 'Keterlambatan Sirkulasi Aset',
-    level: 'Kuning',
-    status_audit: 'Wajar / Terbukti Rusak',
-  },
-];
+  earlyWarningRows: [],
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [periode, setPeriode] = useState('2026');
+  const [loading, setLoading] = useState(false);
+  const [summary, setSummary] = useState(FALLBACK_SUMMARY);
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      setLoading(true);
+      try {
+        const res = await request.get({ entity: `dashboard/summary?periode=${periode}` });
+        if (res?.success && res?.result) {
+          setSummary(res.result);
+        }
+      } catch {
+        // Fallback jika backend belum siap
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadDashboard();
+  }, [periode]);
+
+  const kmItems = summary.kmeans?.items || [];
+  const normalCluster = kmItems
+    .filter((i) => i.klaster === 'Normal')
+    .map((i) => ({ kode: i.kode_bmn, nama: i.nama_perangkat, x2: Number(i.x2), x1: Number(i.x1), x3: Number(i.x3_raw || 10) }));
+  const waspadaCluster = kmItems
+    .filter((i) => i.klaster === 'Waspada')
+    .map((i) => ({ kode: i.kode_bmn, nama: i.nama_perangkat, x2: Number(i.x2), x1: Number(i.x1), x3: Number(i.x3_raw || 25) }));
+  const anomaliCluster = kmItems
+    .filter((i) => i.klaster?.includes('Anomali'))
+    .map((i) => ({ kode: i.kode_bmn, nama: i.nama_perangkat, x2: Number(i.x2), x1: Number(i.x1), x3: Number(i.x3_raw || 50) }));
+  const centroidsData = (summary.kmeans?.centroids || []).map((c) => ({
+    kode: `Centroid (${c.klaster})`,
+    x2: Number(c.centroid_biaya_servis),
+    x1: Number(c.centroid_frekuensi),
+    x3: 60,
+  }));
+
+  const elbowData = summary.kmeans?.elbow || [];
+  const elbowK3 = elbowData.find((e) => e.k === 3)?.sse ?? summary.kmeans?.sse_score ?? 0;
+  const silScore = Number(summary.kmeans?.silhouette_score || 0);
 
   const columns = [
     { title: 'Kode BMN', dataIndex: 'kode_bmn', key: 'kode_bmn' },
@@ -162,7 +137,7 @@ export default function Dashboard() {
     },
     { title: 'Frek. (X1)', dataIndex: 'frekuensi_x1', key: 'frekuensi_x1', render: (v) => `${v}x` },
     { title: 'Durasi (X3)', dataIndex: 'durasi_x3', key: 'durasi_x3', render: (v) => `${v} hr` },
-    { title: 'Jarak Euclidean', dataIndex: 'jarak_euclidean', key: 'jarak_euclidean', render: (v) => v.toFixed(3) },
+    { title: 'Jarak Euclidean', dataIndex: 'jarak_euclidean', key: 'jarak_euclidean', render: (v) => Number(v).toFixed(3) },
     { title: 'Jenis Indikasi Anomali', dataIndex: 'indikasi', key: 'indikasi' },
     {
       title: 'Level Alert',
@@ -230,36 +205,36 @@ export default function Dashboard() {
       {/* Kartu KPI Utama */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} className="whiteBox shadow">
-            <Statistic title="Total Aset TIK (BMN)" value={248} prefix={<LaptopOutlined />} />
+          <Card bordered={false} className="whiteBox shadow" loading={loading}>
+            <Statistic title="Total Aset TIK (BMN)" value={summary.kpi.total_aset} prefix={<LaptopOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} className="whiteBox shadow">
-            <Statistic title="Kondisi Baik (B)" value={214} valueStyle={{ color: '#3f8600' }} prefix={<CheckCircleOutlined />} />
+          <Card bordered={false} className="whiteBox shadow" loading={loading}>
+            <Statistic title="Kondisi Baik (B)" value={summary.kpi.kondisi_baik} valueStyle={{ color: '#3f8600' }} prefix={<CheckCircleOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} className="whiteBox shadow">
-            <Statistic title="Dalam Pemeliharaan / QC" value={14} valueStyle={{ color: '#fa8c16' }} prefix={<ToolOutlined />} />
+          <Card bordered={false} className="whiteBox shadow" loading={loading}>
+            <Statistic title="Dalam Pemeliharaan / QC" value={summary.kpi.dalam_servis} valueStyle={{ color: '#fa8c16' }} prefix={<ToolOutlined />} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false} className="whiteBox shadow">
-            <Statistic title="Alert Indikasi Fraud (K-Means)" value={3} valueStyle={{ color: '#cf1322' }} prefix={<AlertOutlined />} />
+          <Card bordered={false} className="whiteBox shadow" loading={loading}>
+            <Statistic title="Alert Indikasi Fraud (K-Means)" value={summary.kpi.alert_count} valueStyle={{ color: '#cf1322' }} prefix={<AlertOutlined />} />
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} md={12}>
-          <Card bordered={false} className="whiteBox shadow">
-            <Statistic title="Total Nilai Buku Aset TIK (Rp)" value={formatRupiah(3450000000)} prefix={<DollarOutlined />} />
+          <Card bordered={false} className="whiteBox shadow" loading={loading}>
+            <Statistic title="Total Nilai Buku Aset TIK (Rp)" value={formatRupiah(summary.kpi.total_nilai_buku)} prefix={<DollarOutlined />} />
           </Card>
         </Col>
         <Col xs={24} md={12}>
-          <Card bordered={false} className="whiteBox shadow">
-            <Statistic title="Total Realisasi Biaya Pemeliharaan (Rp)" value={formatRupiah(187500000)} valueStyle={{ color: '#1677ff' }} prefix={<ToolOutlined />} />
+          <Card bordered={false} className="whiteBox shadow" loading={loading}>
+            <Statistic title="Total Realisasi Biaya Pemeliharaan (Rp)" value={formatRupiah(summary.kpi.total_biaya_servis)} valueStyle={{ color: '#1677ff' }} prefix={<ToolOutlined />} />
           </Card>
         </Col>
       </Row>
@@ -299,7 +274,9 @@ export default function Dashboard() {
             extra={
               <Space>
                 <Badge status="processing" text="Silhouette:" />
-                <Tag color="#389e0d" style={{ margin: 0, fontWeight: 600 }}>0.684 (K=3)</Tag>
+                <Tag color="#389e0d" style={{ margin: 0, fontWeight: 600 }}>
+                  {silScore.toFixed(3)} (K=3)
+                </Tag>
               </Space>
             }
           >
@@ -310,12 +287,14 @@ export default function Dashboard() {
                 <YAxis />
                 <Tooltip formatter={(v) => [v, 'SSE / WCSS']} labelFormatter={(k) => `Jumlah Klaster K=${k}`} />
                 <Line type="monotone" dataKey="sse" stroke="#1677ff" strokeWidth={2.5} dot={{ r: 4 }} />
-                <ReferenceDot x={3} y={12.48} r={7} fill="#ff4d4f" stroke="#fff" strokeWidth={2} />
+                {elbowK3 > 0 && (
+                  <ReferenceDot x={3} y={elbowK3} r={7} fill="#ff4d4f" stroke="#fff" strokeWidth={2} />
+                )}
               </LineChart>
             </ResponsiveContainer>
             <div style={{ marginTop: 8 }}>
               <span style={{ fontSize: 12, color: '#666' }}>Indikator Kualitas Klaster (Silhouette Coefficient):</span>
-              <Progress percent={68.4} size="small" status="active" format={(p) => `${(p / 100).toFixed(3)}`} />
+              <Progress percent={Math.round(silScore * 1000) / 10} size="small" status="active" format={() => silScore.toFixed(3)} />
             </div>
           </Card>
         </Col>
@@ -328,7 +307,7 @@ export default function Dashboard() {
             className="whiteBox shadow"
           >
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={trendData} margin={{ top: 10, right: 16, bottom: 5, left: 10 }}>
+              <BarChart data={summary.trendData} margin={{ top: 10, right: 16, bottom: 5, left: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="bulan" />
                 <YAxis tickFormatter={(v) => `${(v / 1000000).toFixed(0)} Jt`} />
@@ -351,7 +330,7 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={225}>
               <PieChart>
                 <Pie
-                  data={kondisiData}
+                  data={summary.kondisiData}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
@@ -361,7 +340,7 @@ export default function Dashboard() {
                   paddingAngle={4}
                   label={({ name, value }) => `${name}: ${value}`}
                 >
-                  {kondisiData.map((entry) => (
+                  {summary.kondisiData.map((entry) => (
                     <Cell key={entry.name} fill={entry.color} />
                   ))}
                 </Pie>
@@ -370,9 +349,9 @@ export default function Dashboard() {
               </PieChart>
             </ResponsiveContainer>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-              <Tag color="#0958d9">Tersedia: 186 Unit</Tag>
-              <Tag color="#d48806">Dipinjam: 48 Unit</Tag>
-              <Tag color="#531dab">Dalam Servis: 14 Unit</Tag>
+              <Tag color="#0958d9">Tersedia: {summary.statusCounts.tersedia} Unit</Tag>
+              <Tag color="#d48806">Dipinjam: {summary.statusCounts.dipinjam} Unit</Tag>
+              <Tag color="#531dab">Dalam Servis: {summary.statusCounts.servis} Unit</Tag>
             </div>
           </Card>
         </Col>
@@ -388,7 +367,8 @@ export default function Dashboard() {
         <Table
           rowKey="key"
           columns={columns}
-          dataSource={earlyWarningRows}
+          dataSource={summary.earlyWarningRows}
+          loading={loading}
           pagination={false}
           scroll={{ x: 1350 }}
         />
