@@ -18,7 +18,14 @@ export default function PersonelPage() {
     ADD_NEW_ENTITY: 'Tambah Personel',
     ENTITY_NAME: 'personel',
     fields,
-    searchConfig: { displayLabels: ['nrp', 'nama_lengkap'], searchFields: 'nrp,nama_lengkap' },
+    searchConfig: {
+      displayLabels: ['nrp', 'nama_lengkap', 'satker'],
+      searchFields: 'nrp,nama_lengkap,satker',
+    },
+    filterFields: [
+      { key: 'satker', label: 'Satuan Kerja' },
+      { key: 'pangkat', label: 'Pangkat' },
+    ],
     deleteModalLabels: ['nama_lengkap'],
   };
   return <CrudModule createForm={<DynamicForm fields={fields} />} updateForm={<DynamicForm fields={fields} isUpdateForm />} config={config} />;

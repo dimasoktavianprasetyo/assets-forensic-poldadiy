@@ -1,7 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Select, Space, Tabs, Table, Tag, Popconfirm, message } from 'antd';
-import { UserOutlined, SafetyOutlined, HistoryOutlined, PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Button, Card, Form, Input, Modal, Select, Space, Switch, Tabs, Table, Tag, Popconfirm, message } from 'antd';
+import { UserOutlined, SafetyOutlined, HistoryOutlined, PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import { request } from '@/request';
+
+const PERMISSION_MODULES = [
+  { key: 'master_data', label: 'Master & Aset' },
+  { key: 'sirkulasi', label: 'Sirkulasi & BAST' },
+  { key: 'pemeliharaan', label: 'Pemeliharaan & QC' },
+  { key: 'rekonsiliasi', label: 'Rekonsiliasi' },
+  { key: 'kmeans', label: 'Engine K-Means' },
+  { key: 'audit_alert', label: 'Audit & Alert' },
+  { key: 'user_rbac', label: 'User & RBAC' },
+];
+
+const DEFAULT_PERMISSIONS_BY_ROLE = {
+  admin_subbagrenmin: { master_data: true, sirkulasi: true, pemeliharaan: true, rekonsiliasi: true, kmeans: true, audit_alert: true, user_rbac: true },
+  operator_teknisi: { master_data: true, sirkulasi: true, pemeliharaan: true, rekonsiliasi: false, kmeans: false, audit_alert: false, user_rbac: false },
+  satker: { master_data: false, sirkulasi: true, pemeliharaan: true, rekonsiliasi: false, kmeans: false, audit_alert: false, user_rbac: false },
+  pengawas_internal: { master_data: false, sirkulasi: false, pemeliharaan: false, rekonsiliasi: true, kmeans: true, audit_alert: true, user_rbac: false },
+  kabid_tik: { master_data: false, sirkulasi: false, pemeliharaan: false, rekonsiliasi: true, kmeans: false, audit_alert: true, user_rbac: false },
+};
 
 const ROLE_OPTIONS = [
   { value: 'admin_subbagrenmin', label: 'Admin Subbagrenmin', color: '#1d39c4' },
@@ -14,11 +32,11 @@ const ROLE_OPTIONS = [
 const ROLE_MAP = Object.fromEntries(ROLE_OPTIONS.map((r) => [r.value, r]));
 
 const ROLES_DATA = [
-  { id_role: 1, kode: 'admin_subbagrenmin', nama_role: 'Admin Subbagrenmin', akses: 'Kelola user & RBAC, master data, aset TIK, SPK & biaya, rekonsiliasi, cetak laporan' },
-  { id_role: 2, kode: 'operator_teknisi', nama_role: 'Operator / Teknisi (Tekkom & Tekinfo)', akses: 'Verifikasi pinjam/mutasi, BAST digital, diagnosis tiket, Uji QC, BAST servis' },
-  { id_role: 3, kode: 'satker', nama_role: 'Satker / Personel Pengguna', akses: 'Lihat stok perangkat, ajukan pinjam/mutasi, lapor tiket gangguan, konfirmasi terima' },
-  { id_role: 4, kode: 'pengawas_internal', nama_role: 'Pengawas Internal (Auditor)', akses: 'Pantau histori, eksekusi Engine K-Means (K=3), verifikasi alert & audit_investigasi' },
-  { id_role: 5, kode: 'kabid_tik', nama_role: 'Kepala Bidang TIK (Pimpinan)', akses: 'Executive Early Warning Dashboard, tinjau rekomendasi audit, setujui laporan PDF' },
+  { id_role: 1, kode: 'admin_subbagrenmin', nama_role: 'Admin Subbagrenmin', akses: 'Kelola user & RBAC, master data, aset TIK, SPK & biaya, rekonsiliasi, cetak laporan', permissions: DEFAULT_PERMISSIONS_BY_ROLE.admin_subbagrenmin },
+  { id_role: 2, kode: 'operator_teknisi', nama_role: 'Operator / Teknisi (Tekkom & Tekinfo)', akses: 'Verifikasi pinjam/mutasi, BAST digital, diagnosis tiket, Uji QC, BAST servis', permissions: DEFAULT_PERMISSIONS_BY_ROLE.operator_teknisi },
+  { id_role: 3, kode: 'satker', nama_role: 'Satker / Personel Pengguna', akses: 'Lihat stok perangkat, ajukan pinjam/mutasi, lapor tiket gangguan, konfirmasi terima', permissions: DEFAULT_PERMISSIONS_BY_ROLE.satker },
+  { id_role: 4, kode: 'pengawas_internal', nama_role: 'Pengawas Internal (Auditor)', akses: 'Pantau histori, eksekusi Engine K-Means (K=3), verifikasi alert & audit investigasi', permissions: DEFAULT_PERMISSIONS_BY_ROLE.pengawas_internal },
+  { id_role: 5, kode: 'kabid_tik', nama_role: 'Kepala Bidang TIK (Pimpinan)', akses: 'Executive Early Warning Dashboard, tinjau rekomendasi audit, setujui laporan PDF', permissions: DEFAULT_PERMISSIONS_BY_ROLE.kabid_tik },
 ];
 
 const INITIAL_USERS = [
@@ -32,10 +50,14 @@ const AUDIT_LOGS = [
 
 export default function ManajemenUserPage() {
   const [users, setUsers] = useState(INITIAL_USERS);
+  const [roles, setRoles] = useState(ROLES_DATA);
   const [auditLogs, setAuditLogs] = useState(AUDIT_LOGS);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [roleModalOpen, setRoleModalOpen] = useState(false);
+  const [editingRole, setEditingRole] = useState(null);
   const [form] = Form.useForm();
+  const [roleForm] = Form.useForm();
 
   useEffect(() => {
     const loadUsersAndLogs = async () => {
@@ -46,6 +68,14 @@ export default function ManajemenUserPage() {
         }
       } catch {
         // Fallback ke daftar lokal
+      }
+      try {
+        const roleRes = await request.get({ entity: 'roles' });
+        if (roleRes?.success && Array.isArray(roleRes?.result) && roleRes.result.length > 0) {
+          setRoles(roleRes.result);
+        }
+      } catch {
+        // Fallback ke ROLES_DATA lokal
       }
       try {
         const logRes = await request.get({ entity: 'logs' });
@@ -177,16 +207,103 @@ export default function ManajemenUserPage() {
         </span>
       ),
       children: (
-        <Table
-          rowKey="id_role"
-          dataSource={ROLES_DATA}
-          columns={[
-            { title: 'Level', dataIndex: 'id_role', width: 80 },
-            { title: 'Nama Peran', dataIndex: 'nama_role' },
-            { title: 'Hak Akses & Segregation of Duties', dataIndex: 'akses' },
-          ]}
-          pagination={false}
-        />
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+            <span style={{ color: '#64748b', fontSize: 13 }}>
+              Geser switch modul untuk mengatur hak akses tiap peran secara langsung, atau klik Edit untuk mengubah detail peran.
+            </span>
+            <Popconfirm
+              title="Kembalikan hak akses RBAC ke pengaturan default awal?"
+              onConfirm={async () => {
+                const resetRoles = roles.map((r) => ({
+                  ...r,
+                  permissions: DEFAULT_PERMISSIONS_BY_ROLE[r.kode] || r.permissions,
+                }));
+                setRoles(resetRoles);
+                try {
+                  await Promise.all(
+                    resetRoles.map((r) =>
+                      request.patch({
+                        entity: `roles/${r.id_role}`,
+                        jsonData: { permissions: r.permissions },
+                      })
+                    )
+                  );
+                  message.success('Hak akses RBAC dikembalikan ke default');
+                } catch {
+                  message.warning('Reset lokal berhasil');
+                }
+              }}
+            >
+              <Button icon={<ReloadOutlined />}>Reset Default RBAC</Button>
+            </Popconfirm>
+          </div>
+          <Table
+            rowKey="id_role"
+            dataSource={roles}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { title: 'Level', dataIndex: 'id_role', width: 70 },
+              {
+                title: 'Nama Peran',
+                dataIndex: 'nama_role',
+                render: (t) => <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{t}</span>,
+              },
+              { title: 'Hak Akses & Segregation of Duties', dataIndex: 'akses', width: 280 },
+              ...PERMISSION_MODULES.map((mod) => ({
+                title: mod.label,
+                key: mod.key,
+                align: 'center',
+                width: 110,
+                render: (_, record) => (
+                  <Switch
+                    size="small"
+                    checked={Boolean(record.permissions?.[mod.key])}
+                    onChange={async (checked) => {
+                      const nextPerms = { ...(record.permissions || {}), [mod.key]: checked };
+                      setRoles((prev) =>
+                        prev.map((r) => (r.id_role === record.id_role ? { ...r, permissions: nextPerms } : r))
+                      );
+                      try {
+                        await request.patch({
+                          entity: `roles/${record.id_role}`,
+                          jsonData: { permissions: nextPerms },
+                        });
+                        message.success(`Akses ${mod.label} untuk ${record.nama_role} ${checked ? 'diaktifkan' : 'dinonaktifkan'}`);
+                      } catch {
+                        message.error('Gagal menyimpan perubahan RBAC ke server');
+                      }
+                    }}
+                  />
+                ),
+              })),
+              {
+                title: 'Aksi',
+                key: 'action',
+                fixed: 'right',
+                width: 90,
+                render: (_, record) => (
+                  <Button
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => {
+                      setEditingRole(record);
+                      roleForm.setFieldsValue({
+                        nama_role: record.nama_role,
+                        akses: record.akses,
+                        permissions: record.permissions || {},
+                      });
+                      setRoleModalOpen(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                ),
+              },
+            ]}
+            pagination={false}
+          />
+        </>
       ),
     },
     {
@@ -251,6 +368,58 @@ export default function ManajemenUserPage() {
               ]}
             />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`Edit Peran & Hak Akses RBAC - ${editingRole?.nama_role || ''}`}
+        open={roleModalOpen}
+        onCancel={() => setRoleModalOpen(false)}
+        onOk={() => roleForm.submit()}
+        okText="Simpan Perubahan"
+        cancelText="Batal"
+      >
+        <Form
+          form={roleForm}
+          layout="vertical"
+          onFinish={async (values) => {
+            if (!editingRole) return;
+            try {
+              const res = await request.patch({
+                entity: `roles/${editingRole.id_role}`,
+                jsonData: values,
+              });
+              const updated = res?.result || { ...editingRole, ...values };
+              setRoles((prev) =>
+                prev.map((r) => (r.id_role === editingRole.id_role ? { ...r, ...updated } : r))
+              );
+              message.success('Peran dan hak akses RBAC berhasil diperbarui');
+              setRoleModalOpen(false);
+            } catch {
+              message.error('Gagal menyimpan peran RBAC');
+            }
+          }}
+        >
+          <Form.Item name="nama_role" label="Nama Peran" rules={[{ required: true, message: 'Nama peran wajib diisi' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="akses" label="Deskripsi Hak Akses & Segregation of Duties" rules={[{ required: true }]}>
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <div style={{ marginBottom: 8, fontWeight: 600 }}>Pengaturan Akses Modul (Switch):</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
+            {PERMISSION_MODULES.map((mod) => (
+              <Form.Item
+                key={mod.key}
+                name={['permissions', mod.key]}
+                label={mod.label}
+                valuePropName="checked"
+                style={{ marginBottom: 8 }}
+              >
+                <Switch />
+              </Form.Item>
+            ))}
+          </div>
         </Form>
       </Modal>
     </div>

@@ -2,7 +2,11 @@ import CrudModule from '@/modules/CrudModule/CrudModule';
 import DynamicForm from '@/forms/DynamicForm';
 
 const fields = {
-  no_bar: { type: 'string', label: 'No. Berita Acara (BAR)', required: true },
+  no_bar: {
+    type: 'string',
+    label: 'No. Berita Acara (BAR)',
+    placeholder: 'Otomatis jika dikosongkan (BAR/TIK/...)',
+  },
   periode: {
     type: 'select',
     label: 'Periode Stock Opname',

@@ -41,6 +41,8 @@ def run_kmeans_pipeline(records, k=3):
     for rank, cluster_idx in enumerate(order):
         risk_map[int(cluster_idx)] = label_names[min(rank, len(label_names) - 1)]
 
+    c_normal = centroids[int(order[0])]
+
     centroids_out = []
     for cluster_idx in order:
         c = centroids[int(cluster_idx)]
@@ -56,6 +58,22 @@ def run_kmeans_pipeline(records, k=3):
         lbl = risk_map[int(labels[idx])]
         norm_vec = X_norm[idx]
         risiko_pct = int(min(99, max(5, round((np.linalg.norm(norm_vec) / np.sqrt(3)) * 100))))
+
+        sq_diffs = (norm_vec - c_normal) ** 2
+        total_sq_dist = float(np.sum(sq_diffs))
+        if total_sq_dist > 0:
+            contrib_x1 = round(float(sq_diffs[0] / total_sq_dist * 100.0), 1)
+            contrib_x2 = round(float(sq_diffs[1] / total_sq_dist * 100.0), 1)
+            contrib_x3 = round(max(0.0, 100.0 - contrib_x1 - contrib_x2), 1)
+            contribs = {"X1": contrib_x1, "X2": contrib_x2, "X3": contrib_x3}
+            dominant_feature = max(contribs, key=contribs.get)
+        else:
+            contrib_x1, contrib_x2, contrib_x3 = 0.0, 0.0, 0.0
+            dominant_feature = "X1"
+
+        total_biaya_rp = round(float(row["total_biaya_rp"])) if "total_biaya_rp" in df.columns else 0
+        nilai_buku_rp = round(float(row["nilai_buku_rp"])) if "nilai_buku_rp" in df.columns else 0
+
         items_out.append({
             "id_aset": int(row["id_aset"]),
             "kode_bmn": str(row["kode_bmn"]),
@@ -63,9 +81,18 @@ def run_kmeans_pipeline(records, k=3):
             "x1_raw": float(row["x1"]),
             "x2_raw": float(row["x2"]),
             "x3_raw": float(row["x3"]),
+            "frekuensi_servis": int(round(float(row["x1"]))),
+            "total_biaya_rp": total_biaya_rp,
+            "nilai_buku_rp": nilai_buku_rp,
+            "rasio_persen": round(float(row["x2"]) * 100.0, 1),
+            "durasi_hari": int(round(float(row["x3"]))),
             "x1": round(float(norm_vec[0]), 4),
             "x2": round(float(norm_vec[1]), 4),
             "x3": round(float(norm_vec[2]), 4),
+            "contrib_x1": contrib_x1,
+            "contrib_x2": contrib_x2,
+            "contrib_x3": contrib_x3,
+            "dominant_feature": dominant_feature,
             "jarak": round(float(distances[idx]), 4),
             "klaster": lbl,
             "risiko": risiko_pct,

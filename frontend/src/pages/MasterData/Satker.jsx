@@ -16,7 +16,11 @@ export default function SatkerPage() {
     ADD_NEW_ENTITY: 'Tambah Satker',
     ENTITY_NAME: 'satker',
     fields,
-    searchConfig: { displayLabels: ['kode_satker', 'nama_satker'], searchFields: 'kode_satker,nama_satker' },
+    searchConfig: {
+      displayLabels: ['kode_satker', 'nama_satker', 'pimpinan_satker'],
+      searchFields: 'kode_satker,nama_satker,pimpinan_satker',
+    },
+    filterFields: [{ key: 'nama_satker', label: 'Satuan Kerja' }],
     deleteModalLabels: ['nama_satker'],
   };
   return <CrudModule createForm={<DynamicForm fields={fields} />} updateForm={<DynamicForm fields={fields} isUpdateForm />} config={config} />;

@@ -122,6 +122,13 @@ async function listEntity(req, res) {
     where += ` AND (${likes})`;
     cfg.searchFields.forEach(() => params.push(`%${q}%`));
   }
+  for (const f of cfg.fields) {
+    const val = req.query[f];
+    if (val !== undefined && String(val).trim() !== '') {
+      where += ` AND ${f} = ?`;
+      params.push(String(val).trim());
+    }
+  }
 
   const [rows] = await pool.query(
     `SELECT * FROM ${cfg.table} ${where} ORDER BY ${cfg.pk} DESC LIMIT ? OFFSET ?`,
@@ -171,6 +178,40 @@ async function readEntity(req, res) {
   return res.status(200).json({ success: true, result: mapRow(entity, rows[0]) });
 }
 
+async function syncAsetStatusOnSirkulasi(pool, kodeBmn, statusPinjam) {
+  if (!kodeBmn) return;
+  if (statusPinjam === 'Dipinjam' || statusPinjam === 'Terlambat') {
+    await pool.query(
+      "UPDATE aset_tik SET status_operasional = 'Dipinjam' WHERE kode_bmn = ? AND removed = 0",
+      [kodeBmn]
+    );
+  } else if (statusPinjam === 'Selesai') {
+    const [active] = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM sirkulasi_peminjaman WHERE kode_bmn = ? AND removed = 0 AND status_pinjam IN ('Dipinjam', 'Terlambat')",
+      [kodeBmn]
+    );
+    if (!active[0]?.cnt) {
+      await pool.query(
+        "UPDATE aset_tik SET status_operasional = 'Tersedia' WHERE kode_bmn = ? AND removed = 0 AND status_operasional = 'Dipinjam'",
+        [kodeBmn]
+      );
+    }
+  }
+}
+
+async function generateNextDocNumber(pool, table, col, prefix) {
+  const [rows] = await pool.query(
+    `SELECT ${col} AS doc_no FROM ${table} WHERE ${col} LIKE ? ORDER BY ${col} DESC LIMIT 1`,
+    [`${prefix}%`]
+  );
+  let nextNum = 1;
+  if (rows.length && rows[0].doc_no) {
+    const match = String(rows[0].doc_no).match(/(\d+)$/);
+    if (match) nextNum = parseInt(match[1], 10) + 1;
+  }
+  return `${prefix}${String(nextNum).padStart(3, '0')}`;
+}
+
 async function createEntity(req, res) {
   const { entity } = req.params;
   if (entity === 'users') return createUser(req, res);
@@ -178,17 +219,55 @@ async function createEntity(req, res) {
   if (!cfg) return res.status(404).json({ success: false, message: 'Entitas tidak dikenal' });
 
   const pool = await getPool();
+  const body = { ...req.body };
+  const year = new Date().getFullYear();
+
+  if (entity === 'sirkulasi') {
+    if (body.kode_bmn) {
+      const [asetRows] = await pool.query(
+        'SELECT id_aset, nama_perangkat, status_operasional FROM aset_tik WHERE kode_bmn = ? AND removed = 0 LIMIT 1',
+        [body.kode_bmn]
+      );
+      if (asetRows.length && asetRows[0].status_operasional !== 'Tersedia') {
+        return res.status(400).json({
+          success: false,
+          result: null,
+          message: `Unit "${asetRows[0].nama_perangkat}" (${body.kode_bmn}) sedang tidak tersedia (status: ${asetRows[0].status_operasional}).`,
+        });
+      }
+    }
+    if (!String(body.no_bast || '').trim()) {
+      body.no_bast = await generateNextDocNumber(pool, cfg.table, 'no_bast', `BAST/TIK/${year}/`);
+    }
+  }
+  if (entity === 'pemeliharaan') {
+    if (!String(body.no_tiket || '').trim()) {
+      body.no_tiket = await generateNextDocNumber(pool, cfg.table, 'no_tiket', `TIK-${year}-`);
+    }
+    if (!String(body.no_spk || '').trim()) {
+      body.no_spk = await generateNextDocNumber(pool, cfg.table, 'no_spk', `SPK/TIK/${year}/`);
+    }
+  }
+  if (entity === 'rekonsiliasi' && !String(body.no_bar || '').trim()) {
+    const rekonYear = body.tahun || year;
+    body.no_bar = await generateNextDocNumber(pool, cfg.table, 'no_bar', `BAR/TIK/${rekonYear}/`);
+  }
+
   const cols = [];
   const vals = [];
   for (const f of cfg.fields) {
-    if (req.body[f] !== undefined) {
+    if (body[f] !== undefined) {
       cols.push(f);
-      vals.push(f.startsWith('tgl_') ? normalizeDateField(req.body[f]) : req.body[f]);
+      vals.push(f.startsWith('tgl_') ? normalizeDateField(body[f]) : body[f]);
     }
   }
   const ph = cols.map(() => '?').join(', ');
   const [ins] = await pool.query(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${ph})`, vals);
   const [rows] = await pool.query(`SELECT * FROM ${cfg.table} WHERE ${cfg.pk} = ?`, [ins.insertId]);
+
+  if (entity === 'sirkulasi' && rows[0]) {
+    await syncAsetStatusOnSirkulasi(pool, rows[0].kode_bmn, rows[0].status_pinjam);
+  }
 
   await logActivity(req.user?.id_user, `Tambah data ${entity} (#${ins.insertId})`, req);
   return res.status(200).json({ success: true, result: mapRow(entity, rows[0]), message: 'Data berhasil ditambahkan' });
@@ -214,6 +293,10 @@ async function updateEntity(req, res) {
   await pool.query(`UPDATE ${cfg.table} SET ${sets.join(', ')} WHERE ${cfg.pk} = ?`, vals);
   const [rows] = await pool.query(`SELECT * FROM ${cfg.table} WHERE ${cfg.pk} = ?`, [id]);
 
+  if (entity === 'sirkulasi' && rows[0]) {
+    await syncAsetStatusOnSirkulasi(pool, rows[0].kode_bmn, rows[0].status_pinjam);
+  }
+
   await logActivity(req.user?.id_user, `Ubah data ${entity} (#${id})`, req);
   return res.status(200).json({ success: true, result: mapRow(entity, rows[0]), message: 'Data berhasil diperbarui' });
 }
@@ -224,7 +307,18 @@ async function deleteEntity(req, res) {
   const cfg = ENTITY_CONFIG[entity];
   if (!cfg) return res.status(404).json({ success: false, message: 'Entitas tidak dikenal' });
   const pool = await getPool();
+  let deletedSirkulasi = null;
+  if (entity === 'sirkulasi') {
+    const [existing] = await pool.query(
+      'SELECT kode_bmn FROM sirkulasi_peminjaman WHERE id_pinjam = ? LIMIT 1',
+      [id]
+    );
+    deletedSirkulasi = existing[0] || null;
+  }
   await pool.query(`UPDATE ${cfg.table} SET removed = 1 WHERE ${cfg.pk} = ?`, [id]);
+  if (deletedSirkulasi?.kode_bmn) {
+    await syncAsetStatusOnSirkulasi(pool, deletedSirkulasi.kode_bmn, 'Selesai');
+  }
   await logActivity(req.user?.id_user, `Hapus data ${entity} (#${id})`, req);
   return res.status(200).json({ success: true, result: { _id: id }, message: 'Data berhasil dihapus' });
 }

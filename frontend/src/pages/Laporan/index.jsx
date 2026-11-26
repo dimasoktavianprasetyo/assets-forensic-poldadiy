@@ -23,6 +23,16 @@ const LAPORAN_LIST = [
     title: 'Laporan Audit K-Means & Early Warning Fraud',
     desc: 'Hasil klasterisasi K=3, kurva Elbow SSE, Silhouette Score, alert risiko Kuning/Merah, dan hasil audit investigasi.',
   },
+  {
+    jenis: 'rekonsiliasi-bar',
+    title: 'Berita Acara Rekonsiliasi (BAR) & Stock Opname BMN',
+    desc: 'Rekapitulasi periode stock opname, satuan kerja, hasil pemeriksaan sesuai/selisih, catatan auditor, dan detail rekonsiliasi BMN.',
+  },
+  {
+    jenis: 'data-master',
+    title: 'Laporan Data Master (Satker, Personel, Kategori & Vendor)',
+    desc: 'Rekap data referensi Satuan Kerja, Personel (NRP), Kategori Aset BMN, dan Vendor Pelaksana rekanan BID TIK Polda DIY.',
+  },
 ];
 
 export default function LaporanPage() {
@@ -33,7 +43,7 @@ export default function LaporanPage() {
 
   return (
     <div style={{ padding: '20px' }}>
-      <h2 style={{ marginBottom: 16 }}>Laporan PDF Resmi (Kop BID TIK Polda D.I. Yogyakarta)</h2>
+      <h2 style={{ marginBottom: 16 }}>Laporan PDF Resmi</h2>
       <Row gutter={[16, 16]}>
         {LAPORAN_LIST.map((lap) => (
           <Col xs={24} md={12} key={lap.jenis}>

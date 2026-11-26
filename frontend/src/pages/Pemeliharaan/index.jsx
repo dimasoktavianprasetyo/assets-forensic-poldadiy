@@ -2,10 +2,18 @@ import CrudModule from '@/modules/CrudModule/CrudModule';
 import DynamicForm from '@/forms/DynamicForm';
 
 const fields = {
-  no_tiket: { type: 'string', label: 'No. Tiket Servis', required: true },
+  no_tiket: {
+    type: 'string',
+    label: 'No. Tiket Servis',
+    placeholder: 'Otomatis jika dikosongkan (TIK-2026-...)',
+  },
   kode_bmn: { type: 'string', label: 'Kode BMN / Perangkat', required: true },
   jenis_kerusakan: { type: 'string', label: 'Diagnosis Kerusakan', required: true },
-  no_spk: { type: 'string', label: 'No. SPK Vendor' },
+  no_spk: {
+    type: 'string',
+    label: 'No. SPK Vendor',
+    placeholder: 'Otomatis jika dikosongkan (SPK/TIK/...)',
+  },
   vendor: { type: 'string', label: 'Vendor Pelaksana' },
   status_qc: {
     type: 'selectWithTranslation',
@@ -18,7 +26,7 @@ const fields = {
       { value: 'Servis Ulang', label: 'Servis Ulang', color: '#cf1322' },
     ],
   },
-  total_biaya: { type: 'number', label: 'Total Biaya Servis (Rp)' },
+  total_biaya: { type: 'currency', label: 'Total Biaya Servis (Rp)' },
   status_verifikasi: {
     type: 'selectWithTranslation',
     label: 'Status Verifikasi',

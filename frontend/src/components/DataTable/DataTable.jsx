@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   EyeOutlined,
@@ -6,10 +6,11 @@ import {
   DeleteOutlined,
   EllipsisOutlined,
   RedoOutlined,
-  ArrowRightOutlined,
   ArrowLeftOutlined,
+  FilterOutlined,
+  ClearOutlined,
 } from '@ant-design/icons';
-import { Dropdown, Table, Button, Input } from 'antd';
+import { Dropdown, Table, Button, Input, Select, Space } from 'antd';
 import { PageHeader } from '@ant-design/pro-layout';
 
 import { useSelector, useDispatch } from 'react-redux';
@@ -40,7 +41,7 @@ function AddNewItem({ config }) {
   );
 }
 export default function DataTable({ config, extra = [] }) {
-  let { entity, dataTableColumns, DATATABLE_TITLE, fields, searchConfig } = config;
+  let { entity, dataTableColumns, DATATABLE_TITLE, fields, searchConfig, filterFields = [] } = config;
   const { crudContextAction } = useCrudContext();
   const { panel, collapsedBox, modal, readBox, editBox, advancedBox } = crudContextAction;
   const translate = useLanguage();
@@ -152,28 +153,102 @@ export default function DataTable({ config, extra = [] }) {
 
   const dispatch = useDispatch();
 
-  const handelDataTableLoad = useCallback((pagination) => {
-    const options = { page: pagination.current || 1, items: pagination.pageSize || 10 };
-    dispatch(crud.list({ entity, options }));
-  }, []);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilters, setActiveFilters] = useState({});
+  const [dynamicOptions, setDynamicOptions] = useState({});
+
+  const staticFilterFields = fields
+    ? Object.entries(fields)
+        .filter(([, cfg]) => Array.isArray(cfg?.options) && cfg.options.length > 0)
+        .map(([key, cfg]) => ({ key, label: cfg.label || key, options: cfg.options }))
+    : [];
+
+  const allFilterFields = [
+    ...staticFilterFields,
+    ...filterFields
+      .filter((ff) => !staticFilterFields.some((sf) => sf.key === ff.key))
+      .map((ff) => ({
+        key: ff.key,
+        label: ff.label || fields?.[ff.key]?.label || ff.key,
+        options: ff.options || dynamicOptions[ff.key] || [],
+      })),
+  ];
+
+  useEffect(() => {
+    if (!Array.isArray(dataSource) || filterFields.length === 0) return;
+    setDynamicOptions((prev) => {
+      const next = { ...prev };
+      filterFields.forEach((ff) => {
+        if (ff.options) return;
+        const existing = new Set((prev[ff.key] || []).map((o) => o.value));
+        dataSource.forEach((row) => {
+          const val = row?.[ff.key];
+          if (val !== undefined && val !== null && String(val).trim() !== '') {
+            existing.add(val);
+          }
+        });
+        next[ff.key] = Array.from(existing).map((v) => ({ value: v, label: String(v) }));
+      });
+      return next;
+    });
+  }, [dataSource, entity]);
+
+  const fetchList = useCallback(
+    (extraOpts = {}) => {
+      const cleanFilters = {};
+      const merged = { ...activeFilters, ...(extraOpts.filters || {}) };
+      Object.entries(merged).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && String(v).trim() !== '') {
+          cleanFilters[k] = v;
+        }
+      });
+      const qVal = extraOpts.q !== undefined ? extraOpts.q : searchQuery;
+      const options = {
+        page: extraOpts.page || 1,
+        items: extraOpts.items || 10,
+        ...(qVal ? { q: qVal, fields: searchConfig?.searchFields || '' } : {}),
+        ...cleanFilters,
+      };
+      dispatch(crud.list({ entity, options }));
+    },
+    [dispatch, entity, searchConfig?.searchFields, searchQuery, activeFilters]
+  );
+
+  const handelDataTableLoad = useCallback(
+    (pag) => {
+      fetchList({ page: pag?.current || 1, items: pag?.pageSize || 10 });
+    },
+    [fetchList]
+  );
 
   const filterTable = (e) => {
     const value = e.target.value;
-    const options = { q: value, fields: searchConfig?.searchFields || '' };
-    dispatch(crud.list({ entity, options }));
+    setSearchQuery(value);
+    fetchList({ q: value, page: 1 });
   };
 
-  const dispatcher = () => {
-    dispatch(crud.list({ entity }));
+  const handleFilterChange = (fieldKey, val) => {
+    const nextFilters = { ...activeFilters, [fieldKey]: val };
+    setActiveFilters(nextFilters);
+    fetchList({ filters: nextFilters, page: 1 });
   };
+
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setActiveFilters({});
+    dispatch(crud.list({ entity, options: { page: 1, items: 10 } }));
+  };
+
+  const hasActiveFilter =
+    Boolean(searchQuery) ||
+    Object.values(activeFilters).some((v) => v !== undefined && v !== null && v !== '');
 
   useEffect(() => {
-    const controller = new AbortController();
-    dispatcher();
-    return () => {
-      controller.abort();
-    };
-  }, []);
+    setSearchQuery('');
+    setActiveFilters({});
+    setDynamicOptions({});
+    dispatch(crud.list({ entity }));
+  }, [entity]);
 
   return (
     <>
@@ -185,11 +260,12 @@ export default function DataTable({ config, extra = [] }) {
         extra={[
           <Input
             key={`searchFilterDataTable}`}
+            value={searchQuery}
             onChange={filterTable}
             placeholder={translate('search')}
             allowClear
           />,
-          <Button onClick={handelDataTableLoad} key={`${uniqueId()}`} icon={<RedoOutlined />}>
+          <Button onClick={() => fetchList({ page: pagination?.current || 1 })} key={`${uniqueId()}`} icon={<RedoOutlined />}>
             {translate('Refresh')}
           </Button>,
 
@@ -200,6 +276,32 @@ export default function DataTable({ config, extra = [] }) {
         }}
       ></PageHeader>
 
+      {allFilterFields.length > 0 && (
+        <Space wrap style={{ marginBottom: 14, width: '100%' }}>
+          <span style={{ color: '#64748b', fontSize: 13 }}>
+            <FilterOutlined style={{ marginRight: 6 }} />
+            Filter:
+          </span>
+          {allFilterFields.map((f) => (
+            <Select
+              key={f.key}
+              allowClear
+              showSearch
+              placeholder={f.label || f.key}
+              value={activeFilters[f.key]}
+              onChange={(val) => handleFilterChange(f.key, val)}
+              style={{ minWidth: 175 }}
+              options={f.options.map((o) => ({ value: o.value, label: o.label }))}
+            />
+          ))}
+          {hasActiveFilter && (
+            <Button icon={<ClearOutlined />} onClick={handleResetFilters}>
+              Reset Filter
+            </Button>
+          )}
+        </Space>
+      )}
+
       <Table
         columns={dataTableColumns}
         rowKey={(item) => item._id}
@@ -207,7 +309,7 @@ export default function DataTable({ config, extra = [] }) {
         pagination={pagination}
         loading={listIsLoading}
         onChange={handelDataTableLoad}
-        scroll={{ x: true }}
+        scroll={{ x: 'max-content' }}
       />
     </>
   );

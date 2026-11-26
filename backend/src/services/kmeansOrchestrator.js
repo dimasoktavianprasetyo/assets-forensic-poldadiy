@@ -138,6 +138,18 @@ function runJsKMeansFallback(records, k = 3) {
       const lbl = riskMap[mainFit.labels[i]];
       const jarak = dist(n, mainFit.centroids[mainFit.labels[i]]);
       const risiko = Math.min(99, Math.max(5, Math.round((dist(n, [0, 0, 0]) / Math.sqrt(3)) * 100)));
+      const cNormal = mainFit.centroids[order[0]] || [0, 0, 0];
+      const sq = [0, 1, 2].map((f) => (n[f] - cNormal[f]) ** 2);
+      const totSq = sq[0] + sq[1] + sq[2];
+      const contrib_x1 = totSq > 0 ? Number(((sq[0] / totSq) * 100).toFixed(1)) : 0;
+      const contrib_x2 = totSq > 0 ? Number(((sq[1] / totSq) * 100).toFixed(1)) : 0;
+      const contrib_x3 = totSq > 0 ? Number(Math.max(0, 100 - contrib_x1 - contrib_x2).toFixed(1)) : 0;
+      const dominant_feature =
+        contrib_x2 >= contrib_x1 && contrib_x2 >= contrib_x3
+          ? 'X2'
+          : contrib_x1 >= contrib_x3
+            ? 'X1'
+            : 'X3';
       return {
         id_aset: r.id_aset,
         kode_bmn: r.kode_bmn,
@@ -145,9 +157,18 @@ function runJsKMeansFallback(records, k = 3) {
         x1_raw: r.x1,
         x2_raw: r.x2,
         x3_raw: r.x3,
+        frekuensi_servis: Math.round(Number(r.x1 || 0)),
+        total_biaya_rp: Math.round(Number(r.total_biaya_rp || 0)),
+        nilai_buku_rp: Math.round(Number(r.nilai_buku_rp || 0)),
+        rasio_persen: Number((Number(r.x2 || 0) * 100).toFixed(1)),
+        durasi_hari: Math.round(Number(r.x3 || 0)),
         x1: Number(n[0].toFixed(4)),
         x2: Number(n[1].toFixed(4)),
         x3: Number(n[2].toFixed(4)),
+        contrib_x1,
+        contrib_x2,
+        contrib_x3,
+        dominant_feature,
         jarak: Number(jarak.toFixed(4)),
         klaster: lbl,
         risiko,
@@ -183,6 +204,8 @@ async function extractAssetFeatures() {
       x1,
       x2: Number(x2.toFixed(4)),
       x3,
+      total_biaya_rp: m ? Math.round(Number(m.total_biaya)) : 0,
+      nilai_buku_rp: Math.round(bookValue),
     };
   });
 }

@@ -33,13 +33,13 @@ const SelectAsync = ({
   }, [isSuccess]);
 
   const labels = (optionField) => {
-    return displayLabels.map((x) => optionField[x]).join(' ');
+    return displayLabels.map((x) => optionField[x]).filter(Boolean).join(' - ');
   };
   useEffect(() => {
     if (value !== undefined) {
       const val = value?.[outputValue] ?? value;
       setCurrentValue(val);
-      onChange(val);
+      onChange?.(val);
     }
   }, [value]);
 
@@ -74,18 +74,27 @@ const SelectAsync = ({
 
   return (
     <Select
+      showSearch
+      allowClear
       loading={fetchIsLoading}
       disabled={fetchIsLoading}
       value={currentValue}
       onChange={handleSelectChange}
       placeholder={placeholder}
+      filterOption={(input, option) =>
+        String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+      }
     >
       {optionsList()?.map((option) => {
         return (
-          <Select.Option key={`${uniqueId()}`} value={option.value}>
-            <Tag bordered={false} color={option.color}>
-              {option.label}
-            </Tag>
+          <Select.Option key={`${uniqueId()}`} value={option.value} label={option.label}>
+            {option.color ? (
+              <Tag bordered={false} color={option.color}>
+                {option.label}
+              </Tag>
+            ) : (
+              option.label
+            )}
           </Select.Option>
         );
       })}

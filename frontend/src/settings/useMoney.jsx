@@ -13,26 +13,31 @@ const useMoney = () => {
     : storePersist.get('settings')?.money_format_settings;
 
   function currencyFormat({ amount, currency_code = money_format_state?.currency_code }) {
-    return currency(amount).dollars() > 0 || !money_format_state?.zero_format
-      ? currency(amount, {
-          separator: money_format_state?.thousand_sep,
-          decimal: money_format_state?.decimal_sep,
+    const numericAmount = Number(amount || 0);
+    const separator = money_format_state?.thousand_sep || '.';
+    const decimal = money_format_state?.decimal_sep || ',';
+    const precision = money_format_state?.cent_precision ?? 0;
+    return currency(numericAmount).dollars() > 0 || !money_format_state?.zero_format
+      ? currency(numericAmount, {
+          separator,
+          decimal,
           symbol: '',
-          precision: money_format_state?.cent_precision,
+          precision,
         }).format()
       : 0 +
-          currency(amount, {
-            separator: money_format_state?.thousand_sep,
-            decimal: money_format_state?.decimal_sep,
+          currency(numericAmount, {
+            separator,
+            decimal,
             symbol: '',
-            precision: money_format_state?.cent_precision,
+            precision,
           }).format();
   }
 
   function moneyFormatter({ amount = 0, currency_code = money_format_state?.currency_code }) {
-    return money_format_state?.currency_position === 'before'
-      ? money_format_state?.currency_symbol + ' ' + currencyFormat({ amount, currency_code })
-      : currencyFormat({ amount, currency_code }) + ' ' + money_format_state?.currency_symbol;
+    const symbol = money_format_state?.currency_symbol || 'Rp';
+    return (money_format_state?.currency_position || 'before') === 'before'
+      ? symbol + ' ' + currencyFormat({ amount, currency_code })
+      : currencyFormat({ amount, currency_code }) + ' ' + symbol;
   }
 
   function amountFormatter({ amount = 0, currency_code = money_format_state?.currency_code }) {

@@ -35,13 +35,56 @@ router.get('/kmeans/latest', requireAuth, async (req, res) => {
       'SELECT klaster_label AS klaster, centroid_frekuensi, centroid_biaya_servis, centroid_durasi_pinjam FROM centroid_klaster WHERE id_analisis = ?',
       [ana.id_analisis]
     );
-    const [items] = await pool.query(
-      `SELECT h.id_hasil AS id, a.kode_bmn, a.nama_perangkat, h.skor_x1_norm AS x1, h.skor_x2_norm AS x2, h.skor_x3_norm AS x3,
-              h.jarak_euclidean AS jarak, h.klaster_label AS klaster, h.probabilitas_risiko AS risiko
+    const [itemsRaw] = await pool.query(
+      `SELECT h.id_hasil AS id, a.kode_bmn, a.nama_perangkat, a.nilai_perolehan, a.masa_manfaat_thn, a.tgl_perolehan,
+              h.x1_raw, h.x2_raw, h.x3_raw, h.skor_x1_norm AS x1, h.skor_x2_norm AS x2, h.skor_x3_norm AS x3,
+              h.jarak_euclidean AS jarak, h.klaster_label AS klaster, h.probabilitas_risiko AS risiko,
+              COALESCE((SELECT SUM(p.total_biaya) FROM pemeliharaan_aset p WHERE p.removed = 0 AND (p.id_aset = a.id_aset OR p.kode_bmn = a.kode_bmn)), 0) AS total_biaya_rp
        FROM hasil_klaster_aset h JOIN aset_tik a ON h.id_aset = a.id_aset
        WHERE h.id_analisis = ? ORDER BY h.probabilitas_risiko DESC`,
       [ana.id_analisis]
     );
+    const cNormal = centroids.find((c) => c.klaster === 'Normal') || {
+      centroid_frekuensi: 0,
+      centroid_biaya_servis: 0,
+      centroid_durasi_pinjam: 0,
+    };
+    const items = itemsRaw.map((row) => {
+      const { bookValue } = computeBookValue(row.nilai_perolehan, row.masa_manfaat_thn, row.tgl_perolehan);
+      const sq1 = (Number(row.x1) - Number(cNormal.centroid_frekuensi)) ** 2;
+      const sq2 = (Number(row.x2) - Number(cNormal.centroid_biaya_servis)) ** 2;
+      const sq3 = (Number(row.x3) - Number(cNormal.centroid_durasi_pinjam)) ** 2;
+      const totSq = sq1 + sq2 + sq3;
+      const contrib_x1 = totSq > 0 ? Number(((sq1 / totSq) * 100).toFixed(1)) : 0;
+      const contrib_x2 = totSq > 0 ? Number(((sq2 / totSq) * 100).toFixed(1)) : 0;
+      const contrib_x3 = totSq > 0 ? Number(Math.max(0, 100 - contrib_x1 - contrib_x2).toFixed(1)) : 0;
+      const dominant_feature =
+        contrib_x2 >= contrib_x1 && contrib_x2 >= contrib_x3
+          ? 'X2'
+          : contrib_x1 >= contrib_x3
+            ? 'X1'
+            : 'X3';
+      return {
+        id: row.id,
+        kode_bmn: row.kode_bmn,
+        nama_perangkat: row.nama_perangkat,
+        frekuensi_servis: Math.round(Number(row.x1_raw || 0)),
+        total_biaya_rp: Math.round(Number(row.total_biaya_rp || 0)),
+        nilai_buku_rp: Math.round(bookValue),
+        rasio_persen: Number((Number(row.x2_raw || 0) * 100).toFixed(1)),
+        durasi_hari: Math.round(Number(row.x3_raw || 0)),
+        x1: Number(row.x1),
+        x2: Number(row.x2),
+        x3: Number(row.x3),
+        contrib_x1,
+        contrib_x2,
+        contrib_x3,
+        dominant_feature,
+        jarak: Number(row.jarak),
+        klaster: row.klaster,
+        risiko: row.risiko,
+      };
+    });
     return res.status(200).json({
       success: true,
       result: {
@@ -169,14 +212,25 @@ router.get('/dashboard/summary', requireAuth, async (req, res) => {
         'SELECT klaster_label AS klaster, centroid_frekuensi, centroid_biaya_servis, centroid_durasi_pinjam FROM centroid_klaster WHERE id_analisis = ?',
         [ana.id_analisis]
       );
-      const [items] = await pool.query(
-        `SELECT h.id_hasil AS id, a.id_aset, a.kode_bmn, a.nama_perangkat, h.x1_raw, h.x2_raw, h.x3_raw,
+      const [itemsRaw] = await pool.query(
+        `SELECT h.id_hasil AS id, a.id_aset, a.kode_bmn, a.nama_perangkat, a.nilai_perolehan, a.masa_manfaat_thn, a.tgl_perolehan,
+                h.x1_raw, h.x2_raw, h.x3_raw,
                 h.skor_x1_norm AS x1, h.skor_x2_norm AS x2, h.skor_x3_norm AS x3,
-                h.jarak_euclidean AS jarak, h.klaster_label AS klaster, h.probabilitas_risiko AS risiko
+                h.jarak_euclidean AS jarak, h.klaster_label AS klaster, h.probabilitas_risiko AS risiko,
+                COALESCE((SELECT SUM(p.total_biaya) FROM pemeliharaan_aset p WHERE p.removed = 0 AND (p.id_aset = a.id_aset OR p.kode_bmn = a.kode_bmn)), 0) AS total_biaya_rp
          FROM hasil_klaster_aset h JOIN aset_tik a ON h.id_aset = a.id_aset
          WHERE h.id_analisis = ? ORDER BY h.probabilitas_risiko DESC`,
         [ana.id_analisis]
       );
+      const items = itemsRaw.map((row) => {
+        const { bookValue } = computeBookValue(row.nilai_perolehan, row.masa_manfaat_thn, row.tgl_perolehan);
+        return {
+          ...row,
+          nilai_perolehan: Math.round(Number(row.nilai_perolehan || 0)),
+          nilai_buku_rp: Math.round(bookValue),
+          total_biaya_rp: Math.round(Number(row.total_biaya_rp || 0)),
+        };
+      });
       kmeans = {
         nilai_k: ana.nilai_k,
         sse_score: Number(ana.sse_score),
@@ -230,6 +284,7 @@ router.get('/dashboard/summary', requireAuth, async (req, res) => {
           alert_count: earlyWarningRows.length,
           total_nilai_buku: Math.round(totalNilaiBuku),
           total_biaya_servis: Math.round(totalBiayaServis),
+          depresiasi_bulanan: Math.round(totalDepresiasiBulanan),
         },
         kondisiData: [
           { name: 'Baik (B)', value: kondisiBaik, color: '#52c41a' },
@@ -279,6 +334,51 @@ router.get('/laporan/pdf/:jenis', async (req, res) => {
       );
       thead = '<tr><th>No</th><th>Kode BMN</th><th>Perangkat TIK</th><th>X1 Norm</th><th>X2 Norm</th><th>X3 Norm</th><th>Jarak</th><th>Klaster</th><th>Risiko</th></tr>';
       tbody = rows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.kode_bmn}</td><td>${r.nama_perangkat}</td><td>${Number(r.skor_x1_norm).toFixed(2)}</td><td>${Number(r.skor_x2_norm).toFixed(2)}</td><td>${Number(r.skor_x3_norm).toFixed(2)}</td><td>${Number(r.jarak_euclidean).toFixed(3)}</td><td>${r.klaster_label}</td><td>${r.probabilitas_risiko}%</td></tr>`).join('');
+    } else if (jenis === 'rekonsiliasi-bar') {
+      judul = 'Berita Acara Rekonsiliasi (BAR) & Stock Opname BMN';
+      const [rows] = await pool.query(
+        `SELECT r.*, (SELECT COUNT(*) FROM detail_rekonsiliasi d WHERE d.id_rekon = r.id_rekon) AS jml_detail
+         FROM rekonsiliasi_bmn r WHERE r.removed = 0 ORDER BY r.id_rekon DESC`
+      );
+      thead = '<tr><th>No</th><th>No. BAR</th><th>Periode</th><th>Tahun</th><th>Satuan Kerja</th><th>Hasil Rekonsiliasi</th><th>Detail Unit</th><th>Catatan</th></tr>';
+      tbody = rows
+        .map(
+          (r, i) =>
+            `<tr><td>${i + 1}</td><td>${r.no_bar}</td><td>${r.periode}</td><td>${r.tahun}</td><td>${r.satker}</td><td>${r.status_rekon}</td><td>${r.jml_detail || 0} item</td><td>${r.catatan || '-'}</td></tr>`
+        )
+        .join('');
+    } else if (jenis === 'data-master') {
+      judul = 'Laporan Data Master (Satker, Personel, Kategori & Vendor)';
+      const [satkerRows] = await pool.query('SELECT kode_satker, nama_satker, pimpinan_satker, telepon FROM satuan_kerja WHERE removed = 0 ORDER BY id_satker ASC');
+      const [personelRows] = await pool.query('SELECT nrp, nama_lengkap, pangkat, jabatan, satker FROM personel WHERE removed = 0 ORDER BY id_personel ASC');
+      const [kategoriRows] = await pool.query('SELECT kode_kategori, nama_kategori, masa_manfaat_default FROM kategori_aset WHERE removed = 0 ORDER BY id_kategori ASC');
+      const [vendorRows] = await pool.query('SELECT nama_vendor, npwp, telepon, status_vendor FROM vendor_pelaksana WHERE removed = 0 ORDER BY id_vendor ASC');
+
+      const satkerHtml = satkerRows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.kode_satker}</td><td>${r.nama_satker}</td><td>${r.pimpinan_satker || '-'}</td><td>${r.telepon || '-'}</td></tr>`).join('');
+      const personelHtml = personelRows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.nrp}</td><td>${r.nama_lengkap}</td><td>${r.pangkat || '-'}</td><td>${r.jabatan || '-'}</td><td>${r.satker || '-'}</td></tr>`).join('');
+      const kategoriHtml = kategoriRows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.kode_kategori}</td><td>${r.nama_kategori}</td><td>${r.masa_manfaat_default} Tahun</td></tr>`).join('');
+      const vendorHtml = vendorRows.map((r, i) => `<tr><td>${i + 1}</td><td>${r.nama_vendor}</td><td>${r.npwp || '-'}</td><td>${r.telepon || '-'}</td><td>${r.status_vendor}</td></tr>`).join('');
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(`<!doctype html><html lang="id"><head><meta charset="utf-8"><title>${judul}</title>
+        <style>body{font-family:Arial,sans-serif;padding:30px;color:#111}h4{margin:22px 0 6px}table{width:100%;border-collapse:collapse;margin-bottom:14px}
+        th,td{border:1px solid #333;padding:7px;font-size:12px;text-align:left}th{background:#f0f0f0}.kop{text-align:center;border-bottom:3px double #000;padding-bottom:10px;margin-bottom:20px}</style>
+        </head><body>
+        <div class="kop">
+          <div><strong>KEPOLISIAN DAERAH D.I. YOGYAKARTA</strong></div>
+          <div><strong>BIDANG TEKNOLOGI INFORMASI DAN KOMUNIKASI (BID TIK)</strong></div>
+          <div style="font-size:12px">Jl. Ringroad Utara, Condongcatur, Depok, Sleman, D.I. Yogyakarta 55283</div>
+        </div>
+        <h3 style="text-align:center;text-transform:uppercase">${judul}</h3>
+        <h4>1. Daftar Satuan Kerja (Satker)</h4>
+        <table><thead><tr><th>No</th><th>Kode Satker</th><th>Nama Satker</th><th>Pimpinan</th><th>Telepon</th></tr></thead><tbody>${satkerHtml}</tbody></table>
+        <h4>2. Daftar Personel (NRP)</h4>
+        <table><thead><tr><th>No</th><th>NRP / NIP</th><th>Nama Lengkap</th><th>Pangkat</th><th>Jabatan</th><th>Satker</th></tr></thead><tbody>${personelHtml}</tbody></table>
+        <h4>3. Daftar Kategori Aset BMN</h4>
+        <table><thead><tr><th>No</th><th>Kode Kategori</th><th>Nama Kategori</th><th>Masa Manfaat</th></tr></thead><tbody>${kategoriHtml}</tbody></table>
+        <h4>4. Daftar Vendor Pelaksana</h4>
+        <table><thead><tr><th>No</th><th>Nama Vendor</th><th>NPWP</th><th>Telepon</th><th>Status</th></tr></thead><tbody>${vendorHtml}</tbody></table>
+        <script>window.print()</script></body></html>`);
     } else {
       judul = 'Laporan Inventaris & Depresiasi Aset TIK (BMN)';
       const [assets] = await pool.query('SELECT * FROM aset_tik WHERE removed = 0');
@@ -332,6 +432,139 @@ router.get('/setting/listAll', requireAuth, async (req, res) => {
     return res.status(200).json({ success: true, result });
   } catch {
     return res.status(200).json({ success: true, result: [] });
+  }
+});
+
+const DEFAULT_RBAC_PERMISSIONS = {
+  admin_subbagrenmin: {
+    master_data: true,
+    sirkulasi: true,
+    pemeliharaan: true,
+    rekonsiliasi: true,
+    kmeans: true,
+    audit_alert: true,
+    user_rbac: true,
+  },
+  operator_teknisi: {
+    master_data: true,
+    sirkulasi: true,
+    pemeliharaan: true,
+    rekonsiliasi: false,
+    kmeans: false,
+    audit_alert: false,
+    user_rbac: false,
+  },
+  satker: {
+    master_data: false,
+    sirkulasi: true,
+    pemeliharaan: true,
+    rekonsiliasi: false,
+    kmeans: false,
+    audit_alert: false,
+    user_rbac: false,
+  },
+  pengawas_internal: {
+    master_data: false,
+    sirkulasi: false,
+    pemeliharaan: false,
+    rekonsiliasi: true,
+    kmeans: true,
+    audit_alert: true,
+    user_rbac: false,
+  },
+  kabid_tik: {
+    master_data: false,
+    sirkulasi: false,
+    pemeliharaan: false,
+    rekonsiliasi: true,
+    kmeans: false,
+    audit_alert: true,
+    user_rbac: false,
+  },
+};
+
+async function readRbacMatrix(pool) {
+  const [setRows] = await pool.query(
+    "SELECT settingValue FROM settings WHERE settingKey = 'rbac_permissions' AND removed = 0 LIMIT 1"
+  );
+  if (!setRows.length || !setRows[0].settingValue) return { ...DEFAULT_RBAC_PERMISSIONS };
+  try {
+    return { ...DEFAULT_RBAC_PERMISSIONS, ...JSON.parse(setRows[0].settingValue) };
+  } catch {
+    return { ...DEFAULT_RBAC_PERMISSIONS };
+  }
+}
+
+router.get('/roles', requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const [rows] = await pool.query(
+      'SELECT id_role, kode_role AS kode, nama_role, deskripsi AS akses FROM roles ORDER BY id_role ASC'
+    );
+    const matrix = await readRbacMatrix(pool);
+    const result = rows.map((r) => ({
+      ...r,
+      permissions: matrix[r.kode] || DEFAULT_RBAC_PERMISSIONS[r.kode] || {},
+    }));
+    return res.status(200).json({ success: true, result });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.patch('/roles/:id', requireAuth, requireRole(['admin_subbagrenmin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nama_role, akses, permissions } = req.body || {};
+    const pool = await getPool();
+
+    const [roleRows] = await pool.query('SELECT * FROM roles WHERE id_role = ? LIMIT 1', [id]);
+    if (!roleRows.length) {
+      return res.status(404).json({ success: false, message: 'Peran tidak ditemukan' });
+    }
+    const role = roleRows[0];
+
+    if (nama_role !== undefined || akses !== undefined) {
+      await pool.query(
+        'UPDATE roles SET nama_role = ?, deskripsi = ? WHERE id_role = ?',
+        [nama_role ?? role.nama_role, akses ?? role.deskripsi, id]
+      );
+    }
+
+    const matrix = await readRbacMatrix(pool);
+    if (permissions && typeof permissions === 'object') {
+      matrix[role.kode_role] = { ...(matrix[role.kode_role] || {}), ...permissions };
+      const jsonVal = JSON.stringify(matrix);
+      const [existing] = await pool.query(
+        "SELECT id_setting FROM settings WHERE settingKey = 'rbac_permissions' LIMIT 1"
+      );
+      if (existing.length) {
+        await pool.query(
+          "UPDATE settings SET settingValue = ?, valueType = 'object', removed = 0 WHERE id_setting = ?",
+          [jsonVal, existing[0].id_setting]
+        );
+      } else {
+        await pool.query(
+          "INSERT INTO settings (settingCategory, settingKey, settingValue, valueType, removed) VALUES ('rbac_settings', 'rbac_permissions', ?, 'object', 0)",
+          [jsonVal]
+        );
+      }
+    }
+
+    await logActivity(req.user?.id_user, `Ubah hak akses RBAC (${nama_role || role.nama_role})`, req);
+    return res.status(200).json({
+      success: true,
+      result: {
+        id_role: Number(id),
+        kode: role.kode_role,
+        nama_role: nama_role ?? role.nama_role,
+        akses: akses ?? role.deskripsi,
+        permissions: matrix[role.kode_role] || {},
+      },
+      message: 'Hak akses RBAC berhasil diperbarui',
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 

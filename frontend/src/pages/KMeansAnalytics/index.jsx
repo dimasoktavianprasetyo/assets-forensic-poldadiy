@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Col, Row, Statistic, Table, Tag, Space, message, Divider } from 'antd';
-import { PlayCircleOutlined, RadarChartOutlined, SyncOutlined } from '@ant-design/icons';
+import { Button, Card, Col, Collapse, Row, Statistic, Table, Tag, Space, message, Divider } from 'antd';
+import { PlayCircleOutlined, RadarChartOutlined, SyncOutlined, BulbOutlined, ExclamationCircleFilled, CheckCircleFilled } from '@ant-design/icons';
 import {
   ResponsiveContainer,
   ScatterChart,
@@ -15,6 +15,7 @@ import {
   ReferenceDot,
   BarChart,
   Bar,
+  Cell,
 } from 'recharts';
 import { request } from '@/request';
 
@@ -72,6 +73,7 @@ const PREVIEW_RESULT = {
 export default function KMeansAnalyticsPage() {
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [interpretOpen, setInterpretOpen] = useState(false);
   const [data, setData] = useState(PREVIEW_RESULT);
 
   const loadLatest = async () => {
@@ -134,6 +136,36 @@ export default function KMeansAnalyticsPage() {
   const waspadaItems = data.items.filter((i) => i.klaster === 'Waspada');
   const anomaliItems = data.items.filter((i) => i.klaster.includes('Anomali'));
 
+  const silVal = Number(data.silhouette_score || 0);
+  const silDesc =
+    silVal >= 0.5
+      ? 'pemisahan antara aset normal, waspada, dan anomali sudah sangat tegas.'
+      : silVal >= 0.25
+        ? 'pemisahan kelompok sudah cukup baik sehingga aset bermasalah dapat dibedakan jelas dari aset normal.'
+        : 'jarak antar kelompok masih berdekatan karena jumlah/variasi data masih terbatas.';
+
+  const formatRupiah = (val) => `Rp ${Math.round(Number(val || 0)).toLocaleString('id-ID')}`;
+
+  const describeAnomaliReason = (item) => {
+    const dom = item.dominant_feature || 'X2';
+    const frek = item.frekuensi_servis ?? Math.round(Number(item.x1 || 0) * 3);
+    const biaya = formatRupiah(item.total_biaya_rp || 0);
+    const buku = formatRupiah(item.nilai_buku_rp || 0);
+    const rasio = item.rasio_persen !== undefined ? `${item.rasio_persen}%` : `${Math.round(Number(item.x2 || 0) * 100)}%`;
+    const durasi = item.durasi_hari ?? Math.round(Number(item.x3 || 0) * 60);
+    const c1 = item.contrib_x1 ?? 0;
+    const c2 = item.contrib_x2 ?? 0;
+    const c3 = item.contrib_x3 ?? 0;
+
+    if (dom === 'X2') {
+      return `pemicu dominan adalah Rasio Biaya Servis (kontribusi ${c2}% dari jarak ke Centroid Normal) sebesar ${biaya} atau ${rasio} terhadap nilai buku (${buku}), disertai ${frek}x servis dan ${durasi} hari durasi pinjam.`;
+    }
+    if (dom === 'X1') {
+      return `pemicu dominan adalah Frekuensi Servis berulang sebanyak ${frek}x (kontribusi ${c1}% dari jarak ke Centroid Normal) dengan total biaya ${biaya} (${rasio} dari nilai buku ${buku}) dan ${durasi} hari durasi pinjam.`;
+    }
+    return `pemicu dominan adalah Durasi Sirkulasi/Pinjam selama ${durasi} hari (kontribusi ${c3}% dari jarak ke Centroid Normal), disertai ${frek}x servis senilai ${biaya} (${rasio} dari nilai buku ${buku}).`;
+  };
+
   const centroidsList = data.centroids || PREVIEW_RESULT.centroids;
   const centroidNormal = centroidsList.find((c) => c.klaster === 'Normal') || PREVIEW_RESULT.centroids[0];
   const centroidWaspada = centroidsList.find((c) => c.klaster === 'Waspada') || PREVIEW_RESULT.centroids[1];
@@ -145,6 +177,28 @@ export default function KMeansAnalyticsPage() {
     x2: c.centroid_biaya_servis,
     x3: c.centroid_durasi_pinjam,
   }));
+
+  const riskRankingData = [...data.items]
+    .sort((a, b) => Number(b.risiko || 0) - Number(a.risiko || 0))
+    .map((item) => ({
+      nama: item.nama_perangkat?.length > 22 ? `${item.nama_perangkat.slice(0, 22)}...` : item.nama_perangkat,
+      fullNama: `${item.nama_perangkat} (${item.kode_bmn})`,
+      risiko: Number(item.risiko || 0),
+      klaster: item.klaster,
+      fill: clusterColor[item.klaster] || '#595959',
+    }));
+
+  const contribChartData = [...data.items]
+    .filter((i) => i.klaster !== 'Normal' || Number(i.contrib_x1 || 0) + Number(i.contrib_x2 || 0) + Number(i.contrib_x3 || 0) > 0)
+    .sort((a, b) => Number(b.risiko || 0) - Number(a.risiko || 0))
+    .slice(0, 7)
+    .map((item) => ({
+      nama: item.kode_bmn,
+      fullNama: item.nama_perangkat,
+      X1: Number(item.contrib_x1 || 0),
+      X2: Number(item.contrib_x2 || 0),
+      X3: Number(item.contrib_x3 || 0),
+    }));
 
   // Data untuk Grafik 3: Grouped Bar Chart Profil Centroid Akhir (X1, X2, X3)
   const centroidBarData = [
@@ -213,6 +267,88 @@ export default function KMeansAnalyticsPage() {
           </Card>
         </Col>
       </Row>
+
+      {/* Ringkasan Interpretasi Hasil Analisis (tertutup default, klik untuk buka) */}
+      <Card bordered={false} className="whiteBox shadow" style={{ marginTop: 16 }} bodyStyle={{ padding: '4px 16px' }}>
+        <Collapse
+          ghost
+          activeKey={interpretOpen ? ['interpretasi'] : []}
+          onChange={(keys) => setInterpretOpen(Array.isArray(keys) ? keys.includes('interpretasi') : Boolean(keys))}
+          items={[
+            {
+              key: 'interpretasi',
+              label: (
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>
+                    <BulbOutlined style={{ color: '#d48806', marginRight: 8 }} />
+                    Interpretasi Hasil Analisis
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12.5,
+                      color: '#64748b',
+                      marginLeft: 23,
+                      marginTop: interpretOpen ? 0 : 2,
+                      maxHeight: interpretOpen ? 0 : 24,
+                      opacity: interpretOpen ? 0 : 1,
+                      overflow: 'hidden',
+                      transition: 'all 0.25s ease',
+                    }}
+                  >
+                    Klik untuk menampilkan ringkasan klaster, pemicu anomali per perangkat, dan rekomendasi audit
+                  </div>
+                </div>
+              ),
+              children: (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6, fontSize: 14 }}>
+                      <span>
+                        Dari <strong>{data.items.length} perangkat TIK</strong> yang dianalisis:
+                      </span>
+                      <Tag color="#389e0d" style={{ margin: 0 }}>{normalItems.length} Normal</Tag>
+                      <Tag color="#d48806" style={{ margin: 0 }}>{waspadaItems.length} Waspada</Tag>
+                      <Tag color="#cf1322" style={{ margin: 0 }}>{anomaliItems.length} Anomali / Perlu Audit</Tag>
+                    </div>
+                    <div style={{ color: '#475569', fontSize: 13 }}>
+                      {`Tingkat keakuratan pengelompokan (Silhouette ${silVal.toFixed(3)}) menunjukkan bahwa ${silDesc} Pembagian 3 kelompok dipilih karena pada grafik Elbow (SSE ${Number(data.sse_score || 0).toFixed(2)}) titik K=3 merupakan batas sebelum penurunan kurva melandai.`}
+                    </div>
+                  </div>
+                  <Divider style={{ margin: '12px 0' }} />
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} lg={14}>
+                      <div style={{ fontWeight: 600, marginBottom: 6 }}>Alasan Perangkat Terindikasi Anomali:</div>
+                      {anomaliItems.length > 0 ? (
+                        <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', lineHeight: 1.7 }}>
+                          {anomaliItems.map((item) => (
+                            <li key={item.kode_bmn || item.id} style={{ marginBottom: 6 }}>
+                              <Tag color="#0958d9" style={{ fontWeight: 600, marginRight: 6 }}>
+                                {item.nama_perangkat} ({item.kode_bmn})
+                              </Tag>
+                              memiliki skor risiko <strong style={{ color: '#cf1322' }}>{item.risiko}%</strong> karena{' '}
+                              {describeAnomaliReason(item)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span style={{ color: '#389e0d' }}>Semua perangkat berada dalam kondisi pemakaian dan biaya pemeliharaan yang wajar.</span>
+                      )}
+                    </Col>
+                    <Col xs={24} lg={10} style={{ borderLeft: '1px solid #e2e8f0', paddingLeft: 20 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 6 }}>Rekomendasi Tindak Lanjut Audit:</div>
+                      <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', lineHeight: 1.7 }}>
+                        <li>Cek ulang nota biaya dan SPK vendor pada menu <strong>Pemeliharaan &amp; QC</strong> untuk unit berlabel merah.</li>
+                        <li>Pastikan status pengembalian unit pada menu <strong>Sirkulasi &amp; BAST</strong> jika durasi pinjam terlalu lama.</li>
+                        <li>Catat hasil pemeriksaan resmi pada menu <strong>Early Warning</strong> sebagai bahan laporan Kabid TIK.</li>
+                      </ul>
+                    </Col>
+                  </Row>
+                </>
+              ),
+            },
+          ]}
+        />
+      </Card>
 
       {/* Grid 2x2 Grafik K-Means */}
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
@@ -284,6 +420,49 @@ export default function KMeansAnalyticsPage() {
                 <Scatter name="Anomali / Fraud" data={anomaliItems} fill="#ff4d4f" />
                 <Scatter name="Centroid Akhir" data={centroidPoints} fill="#1d39c4" />
               </ScatterChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+
+        {/* Grafik 5: Stacked Bar Chart Kontribusi Pemicu Risiko (X1, X2, X3 %) */}
+        <Col xs={24} lg={12}>
+          <Card title="Kontribusi Pemicu Risiko per Perangkat (X1, X2, X3 %)" bordered={false} className="whiteBox shadow">
+            <ResponsiveContainer width="100%" height={270}>
+              <BarChart data={contribChartData} margin={{ top: 10, right: 16, bottom: 10, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="nama" />
+                <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                <Tooltip
+                  formatter={(v, name) => [`${v}%`, name]}
+                  labelFormatter={(_, payload) => payload?.[0]?.payload?.fullNama || ''}
+                />
+                <Legend />
+                <Bar dataKey="X1" name="X1 (Frek. Servis)" stackId="a" fill="#0958d9" />
+                <Bar dataKey="X2" name="X2 (Rasio Biaya)" stackId="a" fill="#cf1322" />
+                <Bar dataKey="X3" name="X3 (Durasi Pinjam)" stackId="a" fill="#d48806" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </Col>
+
+        {/* Grafik 6: Horizontal Bar Chart Peringkat Skor Risiko Fraud (%) */}
+        <Col xs={24} lg={12}>
+          <Card title="Peringkat Skor Risiko Fraud (%) per Perangkat" bordered={false} className="whiteBox shadow">
+            <ResponsiveContainer width="100%" height={270}>
+              <BarChart data={riskRankingData} layout="vertical" margin={{ top: 5, right: 24, bottom: 5, left: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                <YAxis type="category" dataKey="nama" width={150} tick={{ fontSize: 12 }} />
+                <Tooltip
+                  formatter={(v) => [`${v}%`, 'Skor Risiko']}
+                  labelFormatter={(_, payload) => payload?.[0]?.payload?.fullNama || ''}
+                />
+                <Bar dataKey="risiko" name="Skor Risiko (%)" radius={[0, 4, 4, 0]}>
+                  {riskRankingData.map((entry, idx) => (
+                    <Cell key={`risk-cell-${idx}`} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </Card>
         </Col>

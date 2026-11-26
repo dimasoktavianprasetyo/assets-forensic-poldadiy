@@ -17,7 +17,14 @@ export default function LokasiPenempatanPage() {
     ADD_NEW_ENTITY: 'Tambah Lokasi',
     ENTITY_NAME: 'lokasi',
     fields,
-    searchConfig: { displayLabels: ['kode_ruangan', 'nama_ruangan'], searchFields: 'kode_ruangan,nama_ruangan' },
+    searchConfig: {
+      displayLabels: ['kode_ruangan', 'nama_ruangan', 'gedung'],
+      searchFields: 'kode_ruangan,nama_ruangan,gedung',
+    },
+    filterFields: [
+      { key: 'gedung', label: 'Gedung' },
+      { key: 'lantai', label: 'Lantai' },
+    ],
     deleteModalLabels: ['nama_ruangan'],
   };
   return <CrudModule createForm={<DynamicForm fields={fields} />} updateForm={<DynamicForm fields={fields} isUpdateForm />} config={config} />;

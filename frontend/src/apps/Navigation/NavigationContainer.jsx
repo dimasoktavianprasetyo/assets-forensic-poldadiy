@@ -91,13 +91,13 @@ function Sidebar({ collapsible, isMobile = false }) {
       key: 'kmeans-analytics',
       icon: <RadarChartOutlined />,
       label: <Link to={'/kmeans-analytics'}>Analitik K-Means</Link>,
-      roles: ['pengawas_internal', 'kabid_tik'],
+      roles: ['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'early-warning',
       icon: <AlertOutlined />,
       label: <Link to={'/early-warning'}>Early Warning & Audit</Link>,
-      roles: ['pengawas_internal', 'kabid_tik'],
+      roles: ['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'laporan',

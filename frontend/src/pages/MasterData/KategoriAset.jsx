@@ -17,6 +17,7 @@ export default function KategoriAsetPage() {
     ENTITY_NAME: 'kategori',
     fields,
     searchConfig: { displayLabels: ['kode_kategori', 'nama_kategori'], searchFields: 'kode_kategori,nama_kategori' },
+    filterFields: [{ key: 'masa_manfaat_default', label: 'Masa Manfaat (Tahun)' }],
     deleteModalLabels: ['nama_kategori'],
   };
   return <CrudModule createForm={<DynamicForm fields={fields} />} updateForm={<DynamicForm fields={fields} isUpdateForm />} config={config} />;

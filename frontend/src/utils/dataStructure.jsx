@@ -49,11 +49,17 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
       date: {
         title: field.label ? translate(field.label) : translate(key),
         dataIndex: keyIndex,
+        onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
         render: (_, record) => {
-          const date = dayjs(record[key]).format(dateFormat);
+          if (typeof field.customRender === 'function') {
+            return field.customRender(record[key], record, dateFormat);
+          }
+          if (!record[key]) return '-';
+          const d = dayjs(record[key]);
+          if (!d.isValid()) return '-';
           return (
             <Tag bordered={false} color={field.color}>
-              {date}
+              {d.format(dateFormat)}
             </Tag>
           );
         },
@@ -75,9 +81,14 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
       async: {
         title: field.label ? translate(field.label) : translate(key),
         dataIndex: keyIndex,
+        onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
         render: (text, record) => {
+          const badgeColor =
+            typeof field.badgeColorFn === 'function'
+              ? field.badgeColorFn(text, record)
+              : field.color || record[key]?.color || record.color;
           return (
-            <Tag bordered={false} color={field.color || record[key]?.color || record.color}>
+            <Tag color={badgeColor} style={{ fontWeight: 500 }}>
               {text}
             </Tag>
           );
@@ -134,6 +145,7 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
       select: {
         title: field.label ? translate(field.label) : translate(key),
         dataIndex: keyIndex,
+        onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
         render: (_, record) => {
           if (field.renderAsTag) {
             const selectedOption = field.options.find((x) => x.value === record[key]);
@@ -149,6 +161,7 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
       selectWithTranslation: {
         title: field.label ? translate(field.label) : translate(key),
         dataIndex: keyIndex,
+        onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
         render: (_, record) => {
           if (field.renderAsTag) {
             const selectedOption = field.options.find((x) => x.value === record[key]);
@@ -188,9 +201,36 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
       },
     };
 
+    const nowrapKeys = [
+      'no_tiket',
+      'no_bast',
+      'no_spk',
+      'no_bar',
+      'kode_bmn',
+      'nrp',
+      'vendor',
+      'satker',
+      'peminjam_satker',
+      'nama_perangkat',
+      'nama_satker',
+      'nama_lengkap',
+    ];
     const defaultComponent = {
       title: field.label ? translate(field.label) : translate(key),
       dataIndex: keyIndex,
+      ...(field.nowrap || nowrapKeys.includes(key)
+        ? {
+            onCell: () => ({
+              style: { whiteSpace: 'nowrap' },
+            }),
+          }
+        : key === 'jenis_kerusakan'
+          ? {
+              onCell: () => ({
+                style: { minWidth: 230 },
+              }),
+            }
+          : {}),
     };
 
     const type = field.type;

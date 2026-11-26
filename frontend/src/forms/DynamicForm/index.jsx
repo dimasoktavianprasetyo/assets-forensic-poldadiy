@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import dayjs from 'dayjs';
 import { DatePicker, Input, Form, Select, InputNumber, Switch, Tag } from 'antd';
 
 import { CloseOutlined, CheckOutlined } from '@ant-design/icons';
@@ -296,7 +297,12 @@ function FormElement({ field, feedback, setFeedback }) {
 
   const compunedComponent = {
     string: (
-      <Input autoComplete="off" maxLength={field.maxLength} defaultValue={field.defaultValue} />
+      <Input
+        autoComplete="off"
+        maxLength={field.maxLength}
+        defaultValue={field.defaultValue}
+        placeholder={field.placeholder}
+      />
     ),
     url: <Input addonBefore="http://" autoComplete="off" placeholder="www.example.com" />,
     textarea: <TextArea rows={4} />,
@@ -323,6 +329,7 @@ function FormElement({ field, feedback, setFeedback }) {
         displayLabels={field.displayLabels}
         outputValue={field.outputValue}
         loadDefault={field.loadDefault}
+        placeholder={field.placeholder || translate('select')}
         withRedirect={field.withRedirect}
         urlToRedirect={field.urlToRedirect}
         redirectLabel={field.redirectLabel}
@@ -379,6 +386,15 @@ function FormElement({ field, feedback, setFeedback }) {
           },
         ]}
         valuePropName={field.type === 'boolean' ? 'checked' : 'value'}
+        {...(field.type === 'date'
+          ? {
+              getValueProps: (value) => {
+                if (!value) return { value: undefined };
+                const d = dayjs.isDayjs(value) ? value : dayjs(value);
+                return { value: d.isValid() ? d : undefined };
+              },
+            }
+          : {})}
       >
         {renderComponent}
       </Form.Item>
