@@ -10,10 +10,11 @@ import { selectCurrentItem } from '@/redux/crud/selectors';
 import { valueByString } from '@/utils/helpers';
 
 import useLanguage from '@/locale/useLanguage';
-import { useDate } from '@/settings';
+import { useDate, useMoney } from '@/settings';
 
 export default function ReadItem({ config }) {
   const { dateFormat } = useDate();
+  const { moneyFormatter } = useMoney();
   let { readColumns, fields } = config;
   const translate = useLanguage();
   const { result: currentResult } = useSelector(selectCurrentItem);
@@ -28,8 +29,20 @@ export default function ReadItem({ config }) {
       const propsKey = props.dataIndex;
       const propsTitle = props.title;
       const isDate = props.isDate || false;
+      const isCurrency = props.isCurrency || false;
       let value = valueByString(currentResult, propsKey);
-      value = isDate ? dayjs(value).format(dateFormat) : value;
+      if (typeof props.customRender === 'function') {
+        value = props.customRender(value, currentResult, dateFormat);
+      } else if (isDate) {
+        if (!value) {
+          value = '-';
+        } else {
+          const d = dayjs(value);
+          value = d.isValid() ? d.format(dateFormat) : '-';
+        }
+      } else if (isCurrency) {
+        value = moneyFormatter({ amount: value });
+      }
       list.push({ propsKey, label: propsTitle, value: value });
     });
     setListState(list);

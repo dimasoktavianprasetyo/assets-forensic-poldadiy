@@ -36,6 +36,13 @@ const fields = {
       { value: 'Selesai', label: 'Selesai & BAST', color: '#389e0d' },
     ],
   },
+  nama_petugas: {
+    type: 'string',
+    label: 'Petugas Pencatat',
+    disableForForm: true,
+    disableForUpdate: true,
+    nowrap: true,
+  },
 };
 
 export default function PemeliharaanPage() {

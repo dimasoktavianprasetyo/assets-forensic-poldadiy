@@ -130,17 +130,72 @@ async function listEntity(req, res) {
     }
   }
 
+  const sort = String(req.query.sort || 'newest').trim();
+  const nameCol = cfg.searchFields[1] || cfg.searchFields[0] || cfg.pk;
+  const dateCol = cfg.fields.find((f) => ['tgl_perolehan', 'tgl_pinjam', 'tgl_lapor', 'tgl_rekon'].includes(f)) || cfg.pk;
+  const valueCol = cfg.fields.find((f) => ['nilai_perolehan', 'total_biaya'].includes(f)) || cfg.pk;
+  const orderMap = {
+    newest: `${cfg.pk} DESC`,
+    oldest: `${cfg.pk} ASC`,
+    name_asc: `${nameCol} ASC`,
+    name_desc: `${nameCol} DESC`,
+    date_desc: `${dateCol} DESC`,
+    date_asc: `${dateCol} ASC`,
+    value_desc: `${valueCol} DESC`,
+    value_asc: `${valueCol} ASC`,
+  };
+  const orderBy = orderMap[sort] || `${cfg.pk} DESC`;
+
   const [rows] = await pool.query(
-    `SELECT * FROM ${cfg.table} ${where} ORDER BY ${cfg.pk} DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM ${cfg.table} ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
   const [cnt] = await pool.query(`SELECT COUNT(*) AS total FROM ${cfg.table} ${where}`, params);
   const count = cnt[0].total;
   const pages = Math.ceil(count / limit);
 
+  let mappedRows = rows.map((r) => mapRow(entity, r));
+  if (entity === 'aset' && mappedRows.length) {
+    const [lokRows] = await pool.query(
+      'SELECT id_lokasi, kode_ruangan, nama_ruangan FROM lokasi_penempatan WHERE removed = 0'
+    );
+    const lokMap = Object.fromEntries(
+      lokRows.map((l) => [l.id_lokasi, `${l.kode_ruangan} - ${l.nama_ruangan}`])
+    );
+    mappedRows = mappedRows.map((r) => ({
+      ...r,
+      nama_lokasi: r.id_lokasi ? lokMap[r.id_lokasi] || '-' : '-',
+    }));
+  }
+  if ((entity === 'sirkulasi' || entity === 'pemeliharaan') && mappedRows.length) {
+    const [userRows] = await pool.query('SELECT id_user, nama FROM users WHERE removed = 0');
+    const userMap = Object.fromEntries(userRows.map((u) => [u.id_user, u.nama]));
+    if (entity === 'sirkulasi') {
+      const [freqRows] = await pool.query(
+        'SELECT kode_bmn, COUNT(*) AS frek FROM sirkulasi_peminjaman WHERE removed = 0 GROUP BY kode_bmn'
+      );
+      const [asetRows] = await pool.query(
+        'SELECT kode_bmn, nama_perangkat FROM aset_tik WHERE removed = 0'
+      );
+      const freqMap = Object.fromEntries(freqRows.map((f) => [f.kode_bmn, Number(f.frek || 1)]));
+      const nameMap = Object.fromEntries(asetRows.map((a) => [a.kode_bmn, a.nama_perangkat]));
+      mappedRows = mappedRows.map((r) => ({
+        ...r,
+        frekuensi_pinjam: freqMap[r.kode_bmn] || 1,
+        nama_perangkat: nameMap[r.kode_bmn] || r.kode_bmn,
+        nama_petugas: r.id_petugas ? userMap[r.id_petugas] || '-' : '-',
+      }));
+    } else {
+      mappedRows = mappedRows.map((r) => ({
+        ...r,
+        nama_petugas: r.id_petugas ? userMap[r.id_petugas] || '-' : '-',
+      }));
+    }
+  }
+
   return res.status(count > 0 ? 200 : 203).json({
     success: true,
-    result: rows.map((r) => mapRow(entity, r)),
+    result: mappedRows,
     pagination: { page, pages, count },
     message: count > 0 ? 'Data berhasil dimuat' : 'Belum ada data',
   });
@@ -222,23 +277,88 @@ async function createEntity(req, res) {
   const body = { ...req.body };
   const year = new Date().getFullYear();
 
+  if (entity === 'sirkulasi' || entity === 'pemeliharaan') {
+    if (req.user?.id_user) body.id_petugas = req.user.id_user;
+  }
+
   if (entity === 'sirkulasi') {
-    if (body.kode_bmn) {
+    const kodeList = Array.isArray(body.kode_bmn)
+      ? body.kode_bmn.filter(Boolean)
+      : [body.kode_bmn].filter(Boolean);
+
+    if (!kodeList.length) {
+      return res.status(400).json({ success: false, result: null, message: 'Minimal pilih 1 perangkat BMN.' });
+    }
+
+    for (const kb of kodeList) {
       const [asetRows] = await pool.query(
         'SELECT id_aset, nama_perangkat, status_operasional FROM aset_tik WHERE kode_bmn = ? AND removed = 0 LIMIT 1',
-        [body.kode_bmn]
+        [kb]
       );
       if (asetRows.length && asetRows[0].status_operasional !== 'Tersedia') {
         return res.status(400).json({
           success: false,
           result: null,
-          message: `Unit "${asetRows[0].nama_perangkat}" (${body.kode_bmn}) sedang tidak tersedia (status: ${asetRows[0].status_operasional}).`,
+          message: `Unit "${asetRows[0].nama_perangkat}" (${kb}) sedang tidak tersedia (status: ${asetRows[0].status_operasional}).`,
         });
       }
     }
+
     if (!String(body.no_bast || '').trim()) {
       body.no_bast = await generateNextDocNumber(pool, cfg.table, 'no_bast', `BAST/TIK/${year}/`);
     }
+
+    let lokasiInfo = null;
+    if (body.jenis_sirkulasi === 'Mutasi' && body.id_lokasi_tujuan) {
+      const [lokRows] = await pool.query(
+        'SELECT id_lokasi, kode_ruangan, nama_ruangan FROM lokasi_penempatan WHERE id_lokasi = ? AND removed = 0 LIMIT 1',
+        [body.id_lokasi_tujuan]
+      );
+      lokasiInfo = lokRows[0] || null;
+      if (lokasiInfo) {
+        const tagLok = `[Penempatan: ${lokasiInfo.kode_ruangan} - ${lokasiInfo.nama_ruangan}]`;
+        body.keperluan_dinas = body.keperluan_dinas
+          ? `${body.keperluan_dinas} ${tagLok}`
+          : tagLok;
+      }
+    }
+
+    const insertedRows = [];
+    for (const kb of kodeList) {
+      const itemBody = { ...body, kode_bmn: kb };
+      const cols = [];
+      const vals = [];
+      for (const f of cfg.fields) {
+        if (itemBody[f] !== undefined) {
+          cols.push(f);
+          vals.push(f.startsWith('tgl_') ? normalizeDateField(itemBody[f]) : itemBody[f]);
+        }
+      }
+      const ph = cols.map(() => '?').join(', ');
+      const [ins] = await pool.query(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${ph})`, vals);
+      const [rows] = await pool.query(`SELECT * FROM ${cfg.table} WHERE ${cfg.pk} = ?`, [ins.insertId]);
+      if (rows[0]) {
+        insertedRows.push(rows[0]);
+        await syncAsetStatusOnSirkulasi(pool, rows[0].kode_bmn, rows[0].status_pinjam);
+        if (lokasiInfo) {
+          await pool.query('UPDATE aset_tik SET id_lokasi = ? WHERE kode_bmn = ? AND removed = 0', [
+            lokasiInfo.id_lokasi,
+            kb,
+          ]);
+        }
+      }
+    }
+
+    await logActivity(
+      req.user?.id_user,
+      `Tambah sirkulasi ${body.no_bast} (${kodeList.length} unit)`,
+      req
+    );
+    return res.status(200).json({
+      success: true,
+      result: mapRow(entity, insertedRows[0]),
+      message: `${kodeList.length} unit berhasil dicatat dalam ${body.no_bast}`,
+    });
   }
   if (entity === 'pemeliharaan') {
     if (!String(body.no_tiket || '').trim()) {
@@ -280,12 +400,19 @@ async function updateEntity(req, res) {
   if (!cfg) return res.status(404).json({ success: false, message: 'Entitas tidak dikenal' });
 
   const pool = await getPool();
+  const body = { ...req.body };
+  if ((entity === 'sirkulasi' || entity === 'pemeliharaan') && req.user?.id_user) {
+    body.id_petugas = req.user.id_user;
+  }
+  if (entity === 'sirkulasi' && Array.isArray(body.kode_bmn)) {
+    body.kode_bmn = body.kode_bmn[0];
+  }
   const sets = [];
   const vals = [];
   for (const f of cfg.fields) {
-    if (req.body[f] !== undefined) {
+    if (body[f] !== undefined) {
       sets.push(`${f} = ?`);
-      vals.push(f.startsWith('tgl_') ? normalizeDateField(req.body[f]) : req.body[f]);
+      vals.push(f.startsWith('tgl_') ? normalizeDateField(body[f]) : body[f]);
     }
   }
   if (!sets.length) return res.status(400).json({ success: false, message: 'Tidak ada field diubah' });

@@ -1,47 +1,56 @@
 import json
+import os
 import sys
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kmeans_model.pkl")
 
-def run_kmeans_pipeline(records, k=3):
-    df = pd.DataFrame(records)
-    features = ['x1', 'x2', 'x3']
-    X_raw = df[features].fillna(0).astype(float).values
 
-    # 1. Normalisasi Min-Max [0, 1] (WAJIB sesuai Bab II, III, IV)
+def train_model_bundle(train_records, k=3):
+    df_train = pd.DataFrame(train_records)
+    features = ["x1", "x2", "x3"]
+    X_train_raw = df_train[features].fillna(0).astype(float).values
+
+    # 1. Fit Min-Max Scaler [0, 1] pada 10.000 Data Latih
     scaler = MinMaxScaler(feature_range=(0, 1))
-    X_norm = scaler.fit_transform(X_raw)
+    X_train_norm = scaler.fit_transform(X_train_raw)
 
-    # 2. Evaluasi Elbow SSE / WCSS (K = 1..8)
+    # 2. Evaluasi Kurva Elbow SSE / WCSS (K = 1..8) pada Data Latih
     elbow_sse = []
-    max_k = min(8, len(X_norm))
+    max_k = min(8, len(X_train_norm))
     for ki in range(1, max_k + 1):
-        km_tmp = KMeans(n_clusters=ki, init='k-means++', n_init=10, random_state=42)
-        km_tmp.fit(X_norm)
+        km_tmp = KMeans(n_clusters=ki, init="k-means++", n_init=10, random_state=42)
+        km_tmp.fit(X_train_norm)
         elbow_sse.append({"k": ki, "sse": round(float(km_tmp.inertia_), 4)})
 
-    # 3. Eksekusi K-Means Utama (K = 3)
-    k_eff = min(k, len(X_norm))
-    kmeans = KMeans(n_clusters=k_eff, init='k-means++', n_init=10, random_state=42)
-    labels = kmeans.fit_predict(X_norm)
+    # 3. Latih Model Utama K-Means (K = 3)
+    k_eff = min(k, len(X_train_norm))
+    kmeans = KMeans(n_clusters=k_eff, init="k-means++", n_init=10, random_state=42)
+    train_labels = kmeans.fit_predict(X_train_norm)
     centroids = kmeans.cluster_centers_
-    sil_score = float(silhouette_score(X_norm, labels)) if len(set(labels)) > 1 else 0.0
 
-    # 4. Hitung Jarak Euclidean per aset ke centroid klasternya
-    distances = np.linalg.norm(X_norm - centroids[labels], axis=1)
+    if len(set(train_labels)) > 1:
+        sil_sample = min(3000, len(X_train_norm)) if len(X_train_norm) > 3000 else None
+        sil_score = float(silhouette_score(X_train_norm, train_labels, sample_size=sil_sample, random_state=42))
+    else:
+        sil_score = 0.0
 
-    # 5. Pelabelan otomatis berdasarkan magnitude norma centroid
-    order = np.argsort(np.linalg.norm(centroids, axis=1))
+    # 4. Urutkan centroid berdasarkan jarak dari titik origin (0,0,0) -> Normal, Waspada, Anomali
+    order = [int(i) for i in np.argsort(np.linalg.norm(centroids, axis=1))]
     label_names = ["Normal", "Waspada", "Anomali / Indikasi Fraud"]
     risk_map = {}
     for rank, cluster_idx in enumerate(order):
         risk_map[int(cluster_idx)] = label_names[min(rank, len(label_names) - 1)]
 
-    c_normal = centroids[int(order[0])]
+    train_dist = {"Normal": 0, "Waspada": 0, "Anomali / Indikasi Fraud": 0}
+    for lbl_idx in train_labels:
+        cname = risk_map[int(lbl_idx)]
+        train_dist[cname] = train_dist.get(cname, 0) + 1
 
     centroids_out = []
     for cluster_idx in order:
@@ -52,6 +61,43 @@ def run_kmeans_pipeline(records, k=3):
             "centroid_biaya_servis": round(float(c[1]), 6),
             "centroid_durasi_pinjam": round(float(c[2]), 6),
         })
+
+    bundle = {
+        "scaler": scaler,
+        "kmeans": kmeans,
+        "order": order,
+        "risk_map": risk_map,
+        "nilai_k": k_eff,
+        "sse_score": round(float(kmeans.inertia_), 4),
+        "silhouette_score": round(sil_score, 4),
+        "elbow": elbow_sse,
+        "centroids": centroids_out,
+        "training_count": int(len(X_train_norm)),
+        "training_distribution": train_dist,
+    }
+    joblib.dump(bundle, MODEL_PATH)
+    return bundle
+
+
+def predict_operational_assets(bundle, records):
+    if not records:
+        return []
+
+    df = pd.DataFrame(records)
+    features = ["x1", "x2", "x3"]
+    X_raw = df[features].fillna(0).astype(float).values
+
+    scaler = bundle["scaler"]
+    kmeans = bundle["kmeans"]
+    risk_map = bundle["risk_map"]
+    order = bundle["order"]
+    centroids = kmeans.cluster_centers_
+    c_normal = centroids[int(order[0])]
+
+    # Transform aset operasional riil menggunakan skala dari 10.000 data latih (clip [0, 1] agar konsisten)
+    X_norm = np.clip(scaler.transform(X_raw), 0.0, 1.0)
+    labels = kmeans.predict(X_norm)
+    distances = np.linalg.norm(X_norm - centroids[labels], axis=1)
 
     items_out = []
     for idx, row in df.iterrows():
@@ -98,18 +144,46 @@ def run_kmeans_pipeline(records, k=3):
             "risiko": risiko_pct,
         })
 
+    return items_out
+
+
+def run_kmeans_pipeline(records, train_records=None, k=3, force_retrain=False):
+    bundle = None
+    if train_records and len(train_records) >= k and (force_retrain or not os.path.exists(MODEL_PATH)):
+        bundle = train_model_bundle(train_records, k=k)
+    elif os.path.exists(MODEL_PATH):
+        try:
+            bundle = joblib.load(MODEL_PATH)
+            if bundle.get("nilai_k") != k and train_records and len(train_records) >= k:
+                bundle = train_model_bundle(train_records, k=k)
+        except Exception:
+            bundle = None
+
+    if bundle is None:
+        source = train_records if (train_records and len(train_records) >= k) else records
+        bundle = train_model_bundle(source, k=k)
+
+    items_out = predict_operational_assets(bundle, records)
+
     return {
-        "nilai_k": k_eff,
-        "sse_score": round(float(kmeans.inertia_), 4),
-        "silhouette_score": round(sil_score, 4),
-        "elbow": elbow_sse,
-        "centroids": centroids_out,
+        "nilai_k": bundle["nilai_k"],
+        "sse_score": bundle["sse_score"],
+        "silhouette_score": bundle["silhouette_score"],
+        "elbow": bundle["elbow"],
+        "centroids": bundle["centroids"],
+        "training_count": bundle.get("training_count", len(records)),
+        "training_distribution": bundle.get("training_distribution", {}),
+        "model_path": "kmeans_model.pkl",
         "items": items_out,
     }
 
 
 if __name__ == "__main__":
     payload = json.loads(sys.stdin.read())
-    result = run_kmeans_pipeline(payload.get("records", []), k=int(payload.get("k", 3)))
+    result = run_kmeans_pipeline(
+        records=payload.get("records", []),
+        train_records=payload.get("train_records", None),
+        k=int(payload.get("k", 3)),
+        force_retrain=bool(payload.get("force_retrain", False)),
+    )
     print(json.dumps(result))
-

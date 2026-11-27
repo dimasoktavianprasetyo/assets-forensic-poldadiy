@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getPool } = require('../config/db');
@@ -44,8 +45,9 @@ async function loginHandler(req, res) {
     return res.status(403).json({ success: false, result: null, message: 'Kata sandi salah.' });
   }
 
+  const sessionKey = crypto.randomBytes(32).toString('hex');
   const token = jwt.sign(
-    { id: user.id_user, role: user.kode_role },
+    { id: user.id_user, role: user.kode_role, sk: sessionKey.slice(0, 16) },
     process.env.JWT_SECRET || 'sim_aset_secret',
     { expiresIn: req.body.remember ? '365d' : '24h' }
   );
@@ -63,6 +65,7 @@ async function loginHandler(req, res) {
       email: user.email,
       photo: user.photo,
       token,
+      sessionKey,
       maxAge: req.body.remember ? 365 : null,
     },
     message: 'Berhasil masuk ke SIM-ASET BID TIK POLDA DIY',

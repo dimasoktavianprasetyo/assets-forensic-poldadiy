@@ -20,6 +20,7 @@ const KMeansAnalytics = lazy(() => import('@/pages/KMeansAnalytics'));
 const EarlyWarning = lazy(() => import('@/pages/EarlyWarning'));
 const Laporan = lazy(() => import('@/pages/Laporan'));
 const ManajemenUser = lazy(() => import('@/pages/ManajemenUser'));
+const Notifikasi = lazy(() => import('@/pages/Notifikasi'));
 
 let routes = {
   expense: [],
@@ -40,6 +41,7 @@ let routes = {
     { path: '/early-warning', element: <EarlyWarning /> },
     { path: '/laporan', element: <Laporan /> },
     { path: '/manajemen-user', element: <ManajemenUser /> },
+    { path: '/notifikasi', element: <Notifikasi /> },
     { path: '/settings', element: <Settings /> },
     { path: '/settings/edit/:settingsKey', element: <Settings /> },
     { path: '/profile', element: <Profile /> },

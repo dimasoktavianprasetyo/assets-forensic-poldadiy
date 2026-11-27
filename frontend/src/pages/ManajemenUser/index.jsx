@@ -51,6 +51,7 @@ const AUDIT_LOGS = [
 export default function ManajemenUserPage() {
   const [users, setUsers] = useState(INITIAL_USERS);
   const [roles, setRoles] = useState(ROLES_DATA);
+  const [personelList, setPersonelList] = useState([]);
   const [auditLogs, setAuditLogs] = useState(AUDIT_LOGS);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
@@ -84,6 +85,14 @@ export default function ManajemenUserPage() {
         }
       } catch {
         // Fallback log lokal
+      }
+      try {
+        const pRes = await request.list({ entity: 'personel', options: { page: 1, items: 100 } });
+        if (pRes?.success && Array.isArray(pRes?.result)) {
+          setPersonelList(pRes.result);
+        }
+      } catch {
+        // ignore
       }
     };
     loadUsersAndLogs();
@@ -344,6 +353,36 @@ export default function ManajemenUserPage() {
         cancelText="Batal"
       >
         <Form form={form} layout="vertical" onFinish={handleSaveUser}>
+          {!editingUser && (
+            <Form.Item label="Ambil dari Data Personel (Opsional)">
+              <Select
+                showSearch
+                allowClear
+                placeholder="Pilih personel dari database atau ketik manual di bawah..."
+                filterOption={(input, option) =>
+                  String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                options={personelList.map((p) => ({
+                  value: p._id,
+                  label: `${p.nama_lengkap}${p.pangkat ? ` (${p.pangkat})` : ''}${p.satker ? ` - ${p.satker}` : ''}`,
+                }))}
+                onChange={(pid) => {
+                  const found = personelList.find((p) => p._id === pid);
+                  if (!found) return;
+                  const fullName = found.pangkat ? `${found.pangkat} ${found.nama_lengkap}` : found.nama_lengkap;
+                  const currentEmail = form.getFieldValue('email');
+                  const slug = String(found.nama_lengkap || '')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '.')
+                    .replace(/^\.+|\.+$/g, '');
+                  form.setFieldsValue({
+                    nama: fullName,
+                    ...(currentEmail ? {} : { email: `${slug || 'personel'}@polda-diy.polri.go.id` }),
+                  });
+                }}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="nama" label="Nama Lengkap / Personel" rules={[{ required: true, message: 'Nama wajib diisi' }]}>
             <Input placeholder="Contoh: Bripka Andi Pratama" />
           </Form.Item>

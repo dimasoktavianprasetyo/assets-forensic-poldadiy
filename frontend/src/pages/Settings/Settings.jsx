@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
+import dayjs from 'dayjs';
+import 'dayjs/locale/id';
 import {
   Alert,
   Button,
@@ -30,6 +32,47 @@ import { selectCurrentAdmin } from '@/redux/auth/selectors';
 
 const STORAGE_KEY = 'sim_aset_bid_tik_settings';
 
+const PANGKAT_POLRI_OPTIONS = [
+  {
+    label: 'Tamtama',
+    options: [
+      { value: 'BHAYANGKARA DUA', label: 'BHAYANGKARA DUA' },
+      { value: 'BHAYANGKARA SATU', label: 'BHAYANGKARA SATU' },
+      { value: 'BHAYANGKARA KEPALA', label: 'BHAYANGKARA KEPALA' },
+      { value: 'AJUN BRIGADIR POLISI DUA', label: 'AJUN BRIGADIR POLISI DUA' },
+      { value: 'AJUN BRIGADIR POLISI SATU', label: 'AJUN BRIGADIR POLISI SATU' },
+      { value: 'AJUN BRIGADIR POLISI', label: 'AJUN BRIGADIR POLISI' },
+    ],
+  },
+  {
+    label: 'Bintara',
+    options: [
+      { value: 'BRIGADIR POLISI DUA', label: 'BRIGADIR POLISI DUA' },
+      { value: 'BRIGADIR POLISI SATU', label: 'BRIGADIR POLISI SATU' },
+      { value: 'BRIGADIR POLISI', label: 'BRIGADIR POLISI' },
+      { value: 'BRIGADIR POLISI KEPALA', label: 'BRIGADIR POLISI KEPALA' },
+      { value: 'AJUN INSPEKTUR POLISI DUA', label: 'AJUN INSPEKTUR POLISI DUA' },
+      { value: 'AJUN INSPEKTUR POLISI SATU', label: 'AJUN INSPEKTUR POLISI SATU' },
+    ],
+  },
+  {
+    label: 'Perwira Pertama (Pama)',
+    options: [
+      { value: 'INSPEKTUR POLISI DUA', label: 'INSPEKTUR POLISI DUA' },
+      { value: 'INSPEKTUR POLISI SATU', label: 'INSPEKTUR POLISI SATU' },
+      { value: 'AJUN KOMISARIS POLISI', label: 'AJUN KOMISARIS POLISI' },
+    ],
+  },
+  {
+    label: 'Perwira Menengah (Pamen)',
+    options: [
+      { value: 'KOMISARIS POLISI', label: 'KOMISARIS POLISI' },
+      { value: 'AJUN KOMISARIS BESAR POLISI', label: 'AJUN KOMISARIS BESAR POLISI' },
+      { value: 'KOMISARIS BESAR POLISI', label: 'KOMISARIS BESAR POLISI' },
+    ],
+  },
+];
+
 function loadSavedSettings() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -52,6 +95,8 @@ function ProfilKesatuanTab({ canEdit }) {
   const instansi = Form.useWatch('nama_instansi', form) || 'KEPOLISIAN DAERAH D.I. YOGYAKARTA';
   const satker = Form.useWatch('nama_satker', form) || 'BIDANG TEKNOLOGI INFORMASI DAN KOMUNIKASI (BID TIK)';
   const alamat = Form.useWatch('alamat_markas', form) || 'Jl. Ringroad Utara, Condongcatur, Depok, Sleman, D.I. Yogyakarta 55283';
+  const previewFormat = Form.useWatch('format_tanggal', form) || saved.format_tanggal || 'DD/MM/YYYY';
+  const previewTz = Form.useWatch('zona_waktu', form) || saved.zona_waktu || 'WIB';
 
   const handleUpload = (setter, key) => ({ file }) => {
     const raw = file.originFileObj || file;
@@ -81,8 +126,10 @@ function ProfilKesatuanTab({ canEdit }) {
         nama_satker: saved.nama_satker || 'BIDANG TEKNOLOGI INFORMASI DAN KOMUNIKASI (BID TIK)',
         alamat_markas: saved.alamat_markas || 'Jl. Ringroad Utara, Condongcatur, Depok, Sleman, D.I. Yogyakarta 55283',
         format_tanggal: saved.format_tanggal || 'DD/MM/YYYY',
+        zona_waktu: saved.zona_waktu || 'WIB',
         jabatan_penandatangan: saved.jabatan_penandatangan || 'Kepala Bidang TIK Polda D.I. Yogyakarta',
-        nama_pangkat_kabid: saved.nama_pangkat_kabid || '',
+        pangkat_kabid: saved.pangkat_kabid || 'KOMISARIS BESAR POLISI',
+        nama_kabid: saved.nama_kabid || saved.nama_pangkat_kabid || '',
         nrp_kabid: saved.nrp_kabid || '',
       }}
       style={{ maxWidth: 760 }}
@@ -96,9 +143,6 @@ function ProfilKesatuanTab({ canEdit }) {
       <Form.Item name="alamat_markas" label="Alamat Markas" rules={[{ required: true }]}>
         <Input.TextArea rows={2} />
       </Form.Item>
-      <Form.Item name="format_tanggal" label="Format Tanggal Sistem">
-        <Select disabled options={[{ value: 'DD/MM/YYYY', label: 'DD/MM/YYYY (Standar Indonesia)' }]} />
-      </Form.Item>
 
       <Divider orientation="left">Pejabat Penandatangan Laporan PDF</Divider>
 
@@ -106,17 +150,54 @@ function ProfilKesatuanTab({ canEdit }) {
         <Input />
       </Form.Item>
       <Row gutter={16}>
-        <Col xs={24} md={14}>
-          <Form.Item name="nama_pangkat_kabid" label="Nama & Pangkat" rules={[{ required: true, message: 'Nama & pangkat wajib diisi' }]}>
-            <Input placeholder="Contoh: KOMBES POL ..., S.I.K., M.Si." />
+        <Col xs={24} md={9}>
+          <Form.Item name="pangkat_kabid" label="Pangkat" rules={[{ required: true, message: 'Pangkat wajib dipilih' }]}>
+            <Select showSearch placeholder="Pilih Pangkat Polri..." options={PANGKAT_POLRI_OPTIONS} />
           </Form.Item>
         </Col>
-        <Col xs={24} md={10}>
+        <Col xs={24} md={9}>
+          <Form.Item name="nama_kabid" label="Nama Pejabat" rules={[{ required: true, message: 'Nama wajib diisi' }]}>
+            <Input placeholder="Contoh: Dr. ..., S.I.K., M.Si." />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={6}>
           <Form.Item name="nrp_kabid" label="NRP" rules={[{ required: true, message: 'NRP wajib diisi' }]}>
             <Input placeholder="Contoh: 74080512" />
           </Form.Item>
         </Col>
       </Row>
+
+      <Row gutter={16}>
+        <Col xs={24} md={14}>
+          <Form.Item name="format_tanggal" label="Format Tanggal Sistem" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY (Contoh: 28/11/2026)' },
+                { value: 'DD MMMM YYYY', label: 'DD MMMM YYYY (Contoh: 28 November 2026)' },
+                { value: 'DD-MM-YYYY', label: 'DD-MM-YYYY (Contoh: 28-11-2026)' },
+                { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD (Contoh: 2026-11-28)' },
+              ]}
+            />
+          </Form.Item>
+        </Col>
+        <Col xs={24} md={10}>
+          <Form.Item name="zona_waktu" label="Zona Waktu Sistem" rules={[{ required: true }]}>
+            <Select
+              options={[
+                { value: 'WIB', label: 'WIB (UTC+7 - DIY / Jawa / Sumatera)' },
+                { value: 'WITA', label: 'WITA (UTC+8 - Bali / Kalimantan / Sulawesi)' },
+                { value: 'WIT', label: 'WIT (UTC+9 - Maluku / Papua)' },
+              ]}
+            />
+          </Form.Item>
+        </Col>
+      </Row>
+      <div style={{ marginTop: -8, marginBottom: 16, fontSize: 12.5, color: '#475569' }}>
+        Pratinjau Tampilan Waktu:{' '}
+        <Tag color="#0958d9" style={{ marginLeft: 4 }}>
+          {dayjs().locale('id').format(previewFormat)} {dayjs().format('HH:mm')} {previewTz}
+        </Tag>
+      </div>
 
       <Divider orientation="left">Upload Logo & Preview Kop Surat Resmi PDF</Divider>
 

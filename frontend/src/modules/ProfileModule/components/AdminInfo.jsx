@@ -13,6 +13,14 @@ import { selectCurrentAdmin } from '@/redux/auth/selectors';
 import useLanguage from '@/locale/useLanguage';
 import { FILE_BASE_URL } from '@/config/serverApiConfig';
 
+const ROLE_LABELS = {
+  admin_subbagrenmin: 'Admin Subbagrenmin',
+  operator_teknisi: 'Operator / Teknisi (Tekkom & Tekinfo)',
+  satker: 'Satker / Personel Pengguna',
+  pengawas_internal: 'Pengawas Internal (Auditor)',
+  kabid_tik: 'Kepala Bidang TIK (Pimpinan)',
+};
+
 const AdminInfo = ({ config }) => {
   const translate = useLanguage();
   const navigate = useNavigate();
@@ -78,7 +86,9 @@ const AdminInfo = ({ config }) => {
               {currentAdmin?.surname}
             </Descriptions.Item>
             <Descriptions.Item label={translate('email')}>{currentAdmin?.email}</Descriptions.Item>
-            <Descriptions.Item label={translate('role')}>{currentAdmin?.role}</Descriptions.Item>
+            <Descriptions.Item label={translate('role')}>
+              {currentAdmin?.roleName || ROLE_LABELS[currentAdmin?.role] || String(currentAdmin?.role || '').replace(/_/g, ' ')}
+            </Descriptions.Item>
           </Descriptions>
         </Col>
       </Row>

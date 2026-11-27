@@ -329,6 +329,7 @@ function FormElement({ field, feedback, setFeedback }) {
         displayLabels={field.displayLabels}
         outputValue={field.outputValue}
         loadDefault={field.loadDefault}
+        mode={field.mode}
         placeholder={field.placeholder || translate('select')}
         withRedirect={field.withRedirect}
         urlToRedirect={field.urlToRedirect}

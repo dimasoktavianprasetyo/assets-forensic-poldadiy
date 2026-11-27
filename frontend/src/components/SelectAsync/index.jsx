@@ -15,6 +15,7 @@ const SelectAsync = ({
   withRedirect = false,
   urlToRedirect = '/',
   placeholder = 'select',
+  mode,
   value,
   onChange,
 }) => {
@@ -36,20 +37,30 @@ const SelectAsync = ({
     return displayLabels.map((x) => optionField[x]).filter(Boolean).join(' - ');
   };
   useEffect(() => {
-    if (value !== undefined) {
-      const val = value?.[outputValue] ?? value;
-      setCurrentValue(val);
-      onChange?.(val);
+    if (value !== undefined && value !== null) {
+      if (mode === 'multiple') {
+        const arr = Array.isArray(value) ? value : [value];
+        setCurrentValue(arr);
+      } else {
+        const val = value?.[outputValue] ?? value;
+        setCurrentValue(val);
+        onChange?.(val);
+      }
+    } else {
+      setCurrentValue(undefined);
     }
   }, [value]);
 
   const handleSelectChange = (newValue) => {
     if (newValue === 'redirectURL') {
       navigate(urlToRedirect);
+    } else if (mode === 'multiple') {
+      setCurrentValue(newValue);
+      onChange?.(newValue);
     } else {
       const val = newValue?.[outputValue] ?? newValue;
       setCurrentValue(newValue);
-      onChange(val);
+      onChange?.(val);
     }
   };
 
@@ -74,6 +85,7 @@ const SelectAsync = ({
 
   return (
     <Select
+      mode={mode}
       showSearch
       allowClear
       loading={fetchIsLoading}

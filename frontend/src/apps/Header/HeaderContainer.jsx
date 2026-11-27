@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
-import { Link, useNavigate } from 'react-router-dom';
-import { AutoComplete, Avatar, Dropdown, Input, Layout, Badge, Button, Tag, Tooltip } from 'antd';
+import { AutoComplete, Avatar, Dropdown, Input, Layout, Badge, Button, Tag } from 'antd';
+import { request } from '@/request';
+import { useSecureNavigate } from '@/utils/urlSecurity';
 import {
   BellOutlined,
   LogoutOutlined,
@@ -47,10 +48,26 @@ const SEARCH_INDEX = [
 export default function HeaderContent() {
   const currentAdmin = useSelector(selectCurrentAdmin);
   const { Header } = Layout;
-  const navigate = useNavigate();
+  const navigate = useSecureNavigate();
   const translate = useLanguage();
   const [searchText, setSearchText] = useState('');
   const [options, setOptions] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+
+  const loadNotifications = async () => {
+    try {
+      const res = await request.get({ entity: 'notifications' });
+      if (res?.success && Array.isArray(res?.result)) {
+        setNotifications(res.result);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+  }, [currentAdmin?.role]);
 
   const roleLabel = ROLE_LABELS[currentAdmin?.role] || 'Admin Subbagrenmin';
 
@@ -116,18 +133,18 @@ export default function HeaderContent() {
     {
       icon: <UserOutlined />,
       key: 'settingProfile',
-      label: <Link to={'/profile'}>{translate('profile_settings')}</Link>,
+      label: <span onClick={() => navigate('/profile')}>{translate('profile_settings')}</span>,
     },
     {
       icon: <ToolOutlined />,
       key: 'settingApp',
-      label: <Link to={'/settings'}>{translate('app_settings')}</Link>,
+      label: <span onClick={() => navigate('/settings')}>{translate('app_settings')}</span>,
     },
     { type: 'divider' },
     {
       icon: <LogoutOutlined />,
       key: 'logout',
-      label: <Link to={'/logout'}>{translate('logout')}</Link>,
+      label: <span onClick={() => navigate('/logout')}>{translate('logout')}</span>,
     },
   ];
 
@@ -172,16 +189,15 @@ export default function HeaderContent() {
           {roleLabel}
         </Tag>
 
-        <Tooltip title="Notifikasi Early Warning Fraud">
-          <Badge count={2} size="small" offset={[-2, 4]}>
-            <Button
-              type="text"
-              shape="circle"
-              icon={<BellOutlined style={{ fontSize: 18, color: '#cf1322' }} />}
-              onClick={() => navigate('/early-warning')}
-            />
-          </Badge>
-        </Tooltip>
+        <Badge count={notifications.length} size="small" offset={[-2, 4]}>
+          <Button
+            type="text"
+            shape="circle"
+            title={`Pusat Notifikasi (${roleLabel})`}
+            icon={<BellOutlined style={{ fontSize: 18, color: '#cf1322' }} />}
+            onClick={() => navigate('/notifikasi')}
+          />
+        </Badge>
 
         <Dropdown
           menu={{ items }}

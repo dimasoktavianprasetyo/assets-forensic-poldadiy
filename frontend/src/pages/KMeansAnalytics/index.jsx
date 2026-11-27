@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Col, Collapse, Row, Statistic, Table, Tag, Space, message, Divider } from 'antd';
-import { PlayCircleOutlined, RadarChartOutlined, SyncOutlined, BulbOutlined, ExclamationCircleFilled, CheckCircleFilled } from '@ant-design/icons';
+import { Button, Card, Col, Collapse, Row, Statistic, Table, Tabs, Tag, Space, message, Divider } from 'antd';
+import { PlayCircleOutlined, RadarChartOutlined, SyncOutlined, BulbOutlined, DatabaseOutlined, DesktopOutlined } from '@ant-design/icons';
+import TrainingModelTab from './TrainingModelTab';
 import {
   ResponsiveContainer,
   ScatterChart,
@@ -94,13 +95,17 @@ export default function KMeansAnalyticsPage() {
     loadLatest();
   }, []);
 
-  const handleRunKMeans = async () => {
+  const handleRunKMeans = async (retrain = false) => {
     setRunning(true);
     try {
-      const res = await request.post({ entity: 'kmeans/run', jsonData: { k: 3 } });
+      const res = await request.post({ entity: 'kmeans/run', jsonData: { k: 3, retrain } });
       if (res?.success && res?.result) {
         setData({ ...PREVIEW_RESULT, ...res.result });
-        message.success('Eksekusi K-Means Clustering (K=3) berhasil!');
+        message.success(
+          retrain
+            ? `Model berhasil dilatih ulang pada ${(res.result.training_count || 10000).toLocaleString('id-ID')} data latih & mendeteksi ${res.result.items?.length || 0} aset operasional!`
+            : `Deteksi K-Means (K=3) pada ${res.result.items?.length || 0} aset operasional berhasil!`
+        );
       } else {
         message.info('Menampilkan simulasi K-Means (backend ML Engine siap dihubungkan).');
       }
@@ -180,6 +185,7 @@ export default function KMeansAnalyticsPage() {
 
   const riskRankingData = [...data.items]
     .sort((a, b) => Number(b.risiko || 0) - Number(a.risiko || 0))
+    .slice(0, 15)
     .map((item) => ({
       nama: item.nama_perangkat?.length > 22 ? `${item.nama_perangkat.slice(0, 22)}...` : item.nama_perangkat,
       fullNama: `${item.nama_perangkat} (${item.kode_bmn})`,
@@ -234,17 +240,37 @@ export default function KMeansAnalyticsPage() {
           </span>
         </Col>
         <Col>
-          <Space>
+          <Space wrap>
             <Button icon={<SyncOutlined />} onClick={loadLatest} loading={loading}>
               Refresh
             </Button>
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleRunKMeans} loading={running}>
-              Jalankan K-Means (K=3)
+            <Button onClick={() => handleRunKMeans(true)} loading={running}>
+              Latih Ulang Model (10k Data)
+            </Button>
+            <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => handleRunKMeans(false)} loading={running}>
+              Deteksi Aset Riil (K=3)
             </Button>
           </Space>
         </Col>
       </Row>
 
+      <Tabs
+        defaultActiveKey="realtime"
+        size="large"
+        items={[
+          {
+            key: 'realtime',
+            label: (
+              <span>
+                <DesktopOutlined /> Deteksi Aset Operasional Real-Time ({data.items.length} Unit BMN)
+              </span>
+            ),
+            children: (
+              <>
+      <Card bordered={false} className="whiteBox shadow" style={{ marginBottom: 16 }} bodyStyle={{ padding: '12px 16px', color: '#475569', fontSize: 13.5 }}>
+        <strong style={{ color: '#0f172a' }}>Tentang Tab Ini:</strong> Modul ini menganalisis{' '}
+        <strong>{data.items.length} unit BMN operasional</strong> yang tersimpan di database secara langsung menggunakan model K-Means terlatih. Setiap perangkat dikelompokkan otomatis ke klaster <strong>Normal</strong>, <strong>Waspada</strong>, atau <strong>Anomali / Indikasi Fraud</strong> berdasarkan frekuensi servis, rasio biaya perbaikan terhadap nilai buku, dan durasi peminjamannya.
+      </Card>
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
           <Card bordered={false} className="whiteBox shadow">
@@ -319,17 +345,24 @@ export default function KMeansAnalyticsPage() {
                     <Col xs={24} lg={14}>
                       <div style={{ fontWeight: 600, marginBottom: 6 }}>Alasan Perangkat Terindikasi Anomali:</div>
                       {anomaliItems.length > 0 ? (
-                        <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', lineHeight: 1.7 }}>
-                          {anomaliItems.map((item) => (
-                            <li key={item.kode_bmn || item.id} style={{ marginBottom: 6 }}>
-                              <Tag color="#0958d9" style={{ fontWeight: 600, marginRight: 6 }}>
-                                {item.nama_perangkat} ({item.kode_bmn})
-                              </Tag>
-                              memiliki skor risiko <strong style={{ color: '#cf1322' }}>{item.risiko}%</strong> karena{' '}
-                              {describeAnomaliReason(item)}
-                            </li>
-                          ))}
-                        </ul>
+                        <>
+                          <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', lineHeight: 1.7 }}>
+                            {anomaliItems.slice(0, 10).map((item) => (
+                              <li key={item.kode_bmn || item.id} style={{ marginBottom: 6 }}>
+                                <Tag color="#0958d9" style={{ fontWeight: 600, marginRight: 6 }}>
+                                  {item.nama_perangkat} ({item.kode_bmn})
+                                </Tag>
+                                memiliki skor risiko <strong style={{ color: '#cf1322' }}>{item.risiko}%</strong> karena{' '}
+                                {describeAnomaliReason(item)}
+                              </li>
+                            ))}
+                          </ul>
+                          {anomaliItems.length > 10 && (
+                            <div style={{ marginTop: 6, color: '#64748b', fontSize: 12 }}>
+                              Menampilkan 10 dari {anomaliItems.length} perangkat anomali teratas. Lihat tabel detail di bawah untuk daftar lengkap.
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <span style={{ color: '#389e0d' }}>Semua perangkat berada dalam kondisi pemakaian dan biaya pemeliharaan yang wajar.</span>
                       )}
@@ -362,9 +395,9 @@ export default function KMeansAnalyticsPage() {
                 <YAxis type="number" dataKey="x2" name="X2 (Rasio Biaya)" domain={[0, 1]} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Legend />
-                <Scatter name="Normal" data={normalItems} fill="#52c41a" />
-                <Scatter name="Waspada" data={waspadaItems} fill="#faad14" />
-                <Scatter name="Anomali / Fraud" data={anomaliItems} fill="#ff4d4f" />
+                <Scatter name="Normal" data={normalItems.slice(0, 120)} fill="#52c41a" />
+                <Scatter name="Waspada" data={waspadaItems.slice(0, 120)} fill="#faad14" />
+                <Scatter name="Anomali / Fraud" data={anomaliItems.slice(0, 120)} fill="#ff4d4f" />
                 <Scatter name="Centroid Akhir" data={centroidPoints} fill="#1d39c4" />
               </ScatterChart>
             </ResponsiveContainer>
@@ -415,9 +448,9 @@ export default function KMeansAnalyticsPage() {
                 <YAxis type="number" dataKey="x3" name="X3 (Durasi Sirkulasi)" domain={[0, 1]} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Legend />
-                <Scatter name="Normal" data={normalItems} fill="#52c41a" />
-                <Scatter name="Waspada" data={waspadaItems} fill="#faad14" />
-                <Scatter name="Anomali / Fraud" data={anomaliItems} fill="#ff4d4f" />
+                <Scatter name="Normal" data={normalItems.slice(0, 120)} fill="#52c41a" />
+                <Scatter name="Waspada" data={waspadaItems.slice(0, 120)} fill="#faad14" />
+                <Scatter name="Anomali / Fraud" data={anomaliItems.slice(0, 120)} fill="#ff4d4f" />
                 <Scatter name="Centroid Akhir" data={centroidPoints} fill="#1d39c4" />
               </ScatterChart>
             </ResponsiveContainer>
@@ -472,7 +505,58 @@ export default function KMeansAnalyticsPage() {
 
       <Card title="Hasil Klasterisasi Aset TIK" bordered={false} className="whiteBox shadow">
         <Table rowKey="id" columns={columns} dataSource={data.items} loading={loading} pagination={{ pageSize: 10 }} />
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: '1px solid #f1f5f9',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            fontSize: 12.5,
+            color: '#475569',
+          }}
+        >
+          <strong style={{ color: '#0f172a' }}>Keterangan Rentang Nilai Normalisasi Min-Max [0.00 - 1.00] (X1, X2, X3):</strong>
+          <div>
+            <Tag color="#389e0d" style={{ marginRight: 8, fontWeight: 600 }}>0.00 - 0.33 (Rendah)</Tag>
+            Aktivitas pemeliharaan dan peminjaman masih rendah/normal dibanding perangkat lain.
+          </div>
+          <div>
+            <Tag color="#d48806" style={{ marginRight: 8, fontWeight: 600 }}>0.34 - 0.66 (Menengah)</Tag>
+            Mulai terlihat kenaikan frekuensi servis, rasio biaya, atau durasi pinjam; perlu pemantauan.
+          </div>
+          <div>
+            <Tag color="#cf1322" style={{ marginRight: 8, fontWeight: 600 }}>0.67 - 1.00 (Tinggi / Ekstrem)</Tag>
+            Mendekati nilai tertinggi di populasi (sering rusak berulang, biaya servis besar vs nilai buku, atau durasi pinjam lama).
+          </div>
+          <div style={{ marginTop: 4, color: '#64748b' }}>
+            <strong>X1</strong> = Frekuensi Servis | <strong>X2</strong> = Rasio Biaya Servis terhadap Nilai Buku | <strong>X3</strong> = Durasi Sirkulasi/Pinjam | <strong>Jarak Euclidean</strong> = Jarak aset terhadap pusat (centroid) klasternya.
+          </div>
+        </div>
       </Card>
+              </>
+            ),
+          },
+          {
+            key: 'training',
+            label: (
+              <span>
+                <DatabaseOutlined /> Visualisasi Model Pelatihan ({(data.training_count || 10000).toLocaleString('id-ID')} Data Baseline)
+              </span>
+            ),
+            children: (
+              <>
+                <Card bordered={false} className="whiteBox shadow" style={{ marginBottom: 16 }} bodyStyle={{ padding: '12px 16px', color: '#475569', fontSize: 13.5 }}>
+                  <strong style={{ color: '#0f172a' }}>Tentang Tab Ini:</strong> Modul ini menampilkan{' '}
+                  <strong>{(data.training_count || 10000).toLocaleString('id-ID')} data latih dasar</strong> yang digunakan untuk melatih model K-Means agar sistem memiliki patokan skala normalisasi dan titik pusat klaster yang konsisten sebelum mendeteksi aset operasional di database.
+                </Card>
+                <TrainingModelTab modelMeta={data} />
+              </>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

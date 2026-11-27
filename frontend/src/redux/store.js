@@ -25,7 +25,7 @@ const store = configureStore({
 });
 
 console.log(
-  '🚀 Welcome to IDURAR ERP CRM! Did you know that we also offer commercial customization services? Contact us at hello@idurarapp.com for more information.'
+  'SIM-ASET BID TIK POLDA DIY - Sistem Informasi Manajemen Aset dan Inventaris Barang Milik Negara (BMN) Bidang Teknologi Informasi dan Komunikasi Kepolisian Daerah Daerah Istimewa Yogyakarta.'
 );
 
 export default store;

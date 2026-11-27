@@ -123,6 +123,32 @@ export default function EarlyWarningPage() {
         className="whiteBox shadow"
       >
         <Table rowKey="_id" columns={columns} dataSource={alerts} loading={loading} pagination={{ pageSize: 10 }} />
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: '1px solid #f1f5f9',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            fontSize: 12.5,
+            color: '#475569',
+          }}
+        >
+          <strong style={{ color: '#0f172a' }}>Keterangan Tingkat Risiko:</strong>
+          <div>
+            <Tag color="#cf1322" style={{ marginRight: 8, fontWeight: 600 }}>Merah</Tag>
+            Anomali / Indikasi Fraud (servis berulang tinggi, biaya ekstrem, atau durasi tidak wajar; wajib investigasi)
+          </div>
+          <div>
+            <Tag color="#d48806" style={{ marginRight: 8, fontWeight: 600 }}>Kuning</Tag>
+            Waspada (mulai terjadi kenaikan durasi sirkulasi atau biaya pemeliharaan; perlu pemantauan)
+          </div>
+          <div>
+            <Tag color="#389e0d" style={{ marginRight: 8, fontWeight: 600 }}>Hijau</Tag>
+            Normal (pemeliharaan dan pemakaian perangkat masih dalam batas wajar)
+          </div>
+        </div>
       </Card>
 
       <Modal

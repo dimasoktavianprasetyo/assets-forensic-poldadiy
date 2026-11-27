@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Card, Col, Row, Statistic, Tag, Table, Progress, Button, Space, Badge, Select } from 'antd';
+import { useSecureNavigate } from '@/utils/urlSecurity';
 import {
   LaptopOutlined,
   CheckCircleOutlined,
@@ -73,7 +73,7 @@ const FALLBACK_SUMMARY = {
 };
 
 export default function Dashboard() {
-  const navigate = useNavigate();
+  const navigate = useSecureNavigate();
   const [periode, setPeriode] = useState('2026');
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState(FALLBACK_SUMMARY);
@@ -112,7 +112,8 @@ export default function Dashboard() {
     x3: 60,
   }));
 
-  const elbowData = summary.kmeans?.elbow || [];
+  const rawElbow = summary.kmeans?.elbow;
+  const elbowData = Array.isArray(rawElbow) ? rawElbow : rawElbow?.elbow || [];
   const elbowK3 = elbowData.find((e) => e.k === 3)?.sse ?? summary.kmeans?.sse_score ?? 0;
   const silScore = Number(summary.kmeans?.silhouette_score || 0);
 

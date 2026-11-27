@@ -10,10 +10,13 @@ export const dataForRead = ({ fields, translate }) => {
 
   Object.keys(fields).forEach((key) => {
     let field = fields[key];
+    if (field.disableForRead) return;
     columns.push({
       title: field.label ? field.label : key,
       dataIndex: field.dataIndex ? field.dataIndex.join('.') : key,
       isDate: field.type === 'date',
+      isCurrency: field.type === 'currency',
+      customRender: field.customRender,
     });
   });
 
@@ -83,6 +86,9 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
         dataIndex: keyIndex,
         onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
         render: (text, record) => {
+          if (typeof field.customRender === 'function') {
+            return field.customRender(record[key], record);
+          }
           const badgeColor =
             typeof field.badgeColorFn === 'function'
               ? field.badgeColorFn(text, record)
@@ -218,6 +224,9 @@ export function dataForTable({ fields, translate, moneyFormatter, dateFormat }) 
     const defaultComponent = {
       title: field.label ? translate(field.label) : translate(key),
       dataIndex: keyIndex,
+      ...(typeof field.customRender === 'function'
+        ? { render: (_, record) => field.customRender(record[key], record) }
+        : {}),
       ...(field.nowrap || nowrapKeys.includes(key)
         ? {
             onCell: () => ({

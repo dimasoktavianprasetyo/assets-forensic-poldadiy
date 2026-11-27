@@ -18,7 +18,16 @@ const fields = {
     ],
   },
   tahun: { type: 'number', label: 'Tahun', required: true },
-  satker: { type: 'string', label: 'Satuan Kerja', required: true },
+  satker: {
+    type: 'async',
+    label: 'Satuan Kerja',
+    required: true,
+    entity: 'satker',
+    displayLabels: ['kode_satker', 'nama_satker'],
+    outputValue: 'nama_satker',
+    placeholder: 'Pilih Satuan Kerja dari database...',
+    color: '#1d39c4',
+  },
   status_rekon: {
     type: 'selectWithTranslation',
     label: 'Hasil Rekonsiliasi',

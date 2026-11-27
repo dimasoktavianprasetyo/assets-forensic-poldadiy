@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { Button, Drawer, Layout, Menu } from 'antd';
 import { useSelector } from 'react-redux';
 
 import { useAppContext } from '@/context/appContext';
 import { selectCurrentAdmin } from '@/redux/auth/selectors';
 import useResponsive from '@/hooks/useResponsive';
+import { useSecureNavigate } from '@/utils/urlSecurity';
 
 import {
   DashboardOutlined,
@@ -29,9 +30,26 @@ export default function Navigation() {
   return isMobile ? <MobileSidebar /> : <Sidebar collapsible={false} />;
 }
 
+const MENU_PATHS = {
+  dashboard: '/',
+  'master/satker': '/master/satker',
+  'master/personel': '/master/personel',
+  'master/kategori': '/master/kategori',
+  'master/lokasi': '/master/lokasi',
+  'master/vendor': '/master/vendor',
+  'aset-tik': '/aset-tik',
+  sirkulasi: '/sirkulasi',
+  pemeliharaan: '/pemeliharaan',
+  rekonsiliasi: '/rekonsiliasi',
+  'kmeans-analytics': '/kmeans-analytics',
+  'early-warning': '/early-warning',
+  laporan: '/laporan',
+  'manajemen-user': '/manajemen-user',
+};
+
 function Sidebar({ collapsible, isMobile = false }) {
   const location = useLocation();
-  const navigate = useNavigate();
+  const navigate = useSecureNavigate();
   const currentAdmin = useSelector(selectCurrentAdmin);
   const role = currentAdmin?.role || 'owner';
 
@@ -47,7 +65,7 @@ function Sidebar({ collapsible, isMobile = false }) {
     {
       key: 'dashboard',
       icon: <DashboardOutlined />,
-      label: <Link to={'/'}>Dashboard</Link>,
+      label: 'Dashboard',
       roles: ['admin_subbagrenmin', 'operator_teknisi', 'satker', 'pengawas_internal', 'kabid_tik'],
     },
     {
@@ -56,59 +74,59 @@ function Sidebar({ collapsible, isMobile = false }) {
       label: 'Master Data BMN',
       roles: ['admin_subbagrenmin'],
       children: [
-        { key: 'master/satker', label: <Link to={'/master/satker'}>Satker</Link> },
-        { key: 'master/personel', label: <Link to={'/master/personel'}>Personel</Link> },
-        { key: 'master/kategori', label: <Link to={'/master/kategori'}>Kategori & Sub-Kategori</Link> },
-        { key: 'master/lokasi', label: <Link to={'/master/lokasi'}>Lokasi Ruangan</Link> },
-        { key: 'master/vendor', label: <Link to={'/master/vendor'}>Vendor Rekanan</Link> },
+        { key: 'master/satker', label: 'Satker' },
+        { key: 'master/personel', label: 'Personel' },
+        { key: 'master/kategori', label: 'Kategori & Sub-Kategori' },
+        { key: 'master/lokasi', label: 'Lokasi Ruangan' },
+        { key: 'master/vendor', label: 'Vendor Rekanan' },
       ],
     },
     {
       key: 'aset-tik',
       icon: <LaptopOutlined />,
-      label: <Link to={'/aset-tik'}>Aset TIK & Depresiasi</Link>,
+      label: 'Aset TIK & Depresiasi',
       roles: ['admin_subbagrenmin', 'operator_teknisi', 'satker', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'sirkulasi',
       icon: <SwapOutlined />,
-      label: <Link to={'/sirkulasi'}>Sirkulasi & BAST</Link>,
+      label: 'Sirkulasi & BAST',
       roles: ['admin_subbagrenmin', 'operator_teknisi', 'satker', 'pengawas_internal'],
     },
     {
       key: 'pemeliharaan',
       icon: <ToolOutlined />,
-      label: <Link to={'/pemeliharaan'}>Pemeliharaan & QC</Link>,
+      label: 'Pemeliharaan & QC',
       roles: ['admin_subbagrenmin', 'operator_teknisi', 'satker', 'pengawas_internal'],
     },
     {
       key: 'rekonsiliasi',
       icon: <ReconciliationOutlined />,
-      label: <Link to={'/rekonsiliasi'}>Rekonsiliasi BMN</Link>,
+      label: 'Rekonsiliasi BMN',
       roles: ['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'kmeans-analytics',
       icon: <RadarChartOutlined />,
-      label: <Link to={'/kmeans-analytics'}>Analitik K-Means</Link>,
+      label: 'Analitik K-Means',
       roles: ['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'early-warning',
       icon: <AlertOutlined />,
-      label: <Link to={'/early-warning'}>Early Warning & Audit</Link>,
+      label: 'Early Warning & Audit',
       roles: ['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'laporan',
       icon: <FilePdfOutlined />,
-      label: <Link to={'/laporan'}>Laporan PDF Resmi</Link>,
+      label: 'Laporan PDF Resmi',
       roles: ['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'],
     },
     {
       key: 'manajemen-user',
       icon: <TeamOutlined />,
-      label: <Link to={'/manajemen-user'}>Manajemen User & Audit Trail</Link>,
+      label: 'Manajemen User & Audit Trail',
       roles: ['admin_subbagrenmin'],
     },
   ];
@@ -198,6 +216,10 @@ function Sidebar({ collapsible, isMobile = false }) {
         mode="inline"
         theme={'light'}
         selectedKeys={[currentPath]}
+        onClick={({ key }) => {
+          const target = MENU_PATHS[key];
+          if (target) navigate(target);
+        }}
         style={{
           background: 'none',
           border: 'none',

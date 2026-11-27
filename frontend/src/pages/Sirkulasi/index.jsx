@@ -1,6 +1,8 @@
-import { Card, Col, Row, Tag } from 'antd';
+import { useEffect, useState } from 'react';
+import { Alert, Card, Col, Form, notification, Row, Tag } from 'antd';
 import dayjs from 'dayjs';
 import { useSelector } from 'react-redux';
+import { request } from '@/request';
 import {
   ResponsiveContainer,
   BarChart,
@@ -37,12 +39,29 @@ const fields = {
   no_surat_perintah: { type: 'string', label: 'No. Surat Perintah', required: true },
   kode_bmn: {
     type: 'async',
-    label: 'Kode BMN / Perangkat',
+    mode: 'multiple',
+    label: 'Perangkat & Kode BMN',
     required: true,
     entity: 'aset',
     displayLabels: ['kode_bmn', 'nama_perangkat', 'status_operasional'],
     outputValue: 'kode_bmn',
-    placeholder: 'Cari kode BMN atau nama perangkat...',
+    placeholder: 'Pilih 1 atau lebih perangkat BMN...',
+    customRender: (val, record) => (
+      <div>
+        <div style={{ fontWeight: 600, color: '#0f172a' }}>{record?.nama_perangkat || val}</div>
+        <div style={{ fontSize: 12, color: '#64748b' }}>Kode BMN: {val}</div>
+      </div>
+    ),
+  },
+  id_lokasi_tujuan: {
+    type: 'async',
+    label: 'Lokasi Penempatan Tujuan (Khusus Mutasi)',
+    entity: 'lokasi',
+    displayLabels: ['kode_ruangan', 'nama_ruangan'],
+    outputValue: 'id_lokasi',
+    placeholder: 'Pilih ruangan tujuan jika Mutasi...',
+    disableForTable: true,
+    disableForRead: true,
   },
   peminjam_satker: {
     type: 'async',
@@ -72,11 +91,27 @@ const fields = {
       return aktual.isValid() ? aktual.format(dateFormat) : '-';
     },
   },
+  frekuensi_pinjam: {
+    type: 'date',
+    label: 'Frekuensi Pinjam',
+    disableForForm: true,
+    disableForUpdate: true,
+    disableForRead: true,
+    customRender: (val) => {
+      const n = Number(val || 1);
+      return (
+        <Tag color={n >= 3 ? '#cf1322' : n === 2 ? '#d48806' : '#0958d9'} style={{ margin: 0 }}>
+          {n}x Dipinjam
+        </Tag>
+      );
+    },
+  },
   ketepatan_waktu: {
     type: 'date',
     label: 'Ketepatan Waktu',
     disableForForm: true,
     disableForUpdate: true,
+    disableForRead: true,
     customRender: (_, record) => {
       const rencana = record?.tgl_kembali_rencana ? dayjs(record.tgl_kembali_rencana).startOf('day') : null;
       if (!record?.tgl_kembali_aktual) {
@@ -115,6 +150,13 @@ const fields = {
       { value: 'Terlambat', label: 'Terlambat', color: '#cf1322' },
       { value: 'Selesai', label: 'Selesai / Kembali', color: '#389e0d' },
     ],
+  },
+  nama_petugas: {
+    type: 'string',
+    label: 'Petugas Pencatat',
+    disableForForm: true,
+    disableForUpdate: true,
+    nowrap: true,
   },
   keperluan_dinas: { type: 'textarea', label: 'Keperluan Dinas', disableForTable: true },
 };
@@ -163,8 +205,45 @@ function SirkulasiIsometricChart() {
   const baikCount = items.filter((i) => i.kondisi_keluar === 'Baik').length;
   const rrCount = items.filter((i) => i.kondisi_keluar === 'RR').length;
 
+  const freqMap = {};
+  items.forEach((i) => {
+    const k = i.kode_bmn || 'Lainnya';
+    if (!freqMap[k]) {
+      freqMap[k] = {
+        kode_bmn: k,
+        nama: i.nama_perangkat ? (i.nama_perangkat.length > 16 ? `${i.nama_perangkat.slice(0, 16)}...` : i.nama_perangkat) : k,
+        fullNama: i.nama_perangkat ? `${i.nama_perangkat} (${k})` : k,
+        jumlah: Number(i.frekuensi_pinjam || 0) || 1,
+        _count: 1,
+      };
+    } else {
+      freqMap[k]._count += 1;
+      freqMap[k].jumlah = Math.max(freqMap[k].jumlah, freqMap[k]._count);
+    }
+  });
+  const freqChartData = Object.values(freqMap)
+    .sort((a, b) => b.jumlah - a.jumlah)
+    .slice(0, 6);
+
+  const satkerMap = {};
+  items.forEach((i) => {
+    const p = i.peminjam_satker || 'Lainnya';
+    if (!satkerMap[p]) {
+      satkerMap[p] = {
+        nama: p.length > 22 ? `${p.slice(0, 22)}...` : p,
+        fullNama: p,
+        jumlah: 1,
+      };
+    } else {
+      satkerMap[p].jumlah += 1;
+    }
+  });
+  const satkerChartData = Object.values(satkerMap)
+    .sort((a, b) => b.jumlah - a.jumlah)
+    .slice(0, 6);
+
   return (
-    <Row gutter={[16, 16]} style={{ margin: '24px 24px -10px' }}>
+    <Row gutter={[16, 16]} style={{ marginTop: 0, marginBottom: -8 }}>
       <Col xs={24} lg={12}>
         <Card
           title="Ringkasan Status Sirkulasi & BAST Digital (%)"
@@ -198,15 +277,17 @@ function SirkulasiIsometricChart() {
           style={{ height: '100%' }}
         >
           <ResponsiveContainer width="100%" height={205}>
-            <PieChart>
+            <PieChart margin={{ top: 10, right: 20, bottom: 10, left: 20 }}>
               <Pie
                 data={jenisData}
                 dataKey="value"
                 nameKey="name"
                 cx="50%"
                 cy="50%"
+                startAngle={45}
+                endAngle={-315}
                 innerRadius={44}
-                outerRadius={66}
+                outerRadius={64}
                 paddingAngle={4}
                 label={({ name, value }) => `${name}: ${value}`}
               >
@@ -224,7 +305,120 @@ function SirkulasiIsometricChart() {
           </div>
         </Card>
       </Col>
+
+      <Col xs={24} lg={12}>
+        <Card
+          title="Frekuensi Pinjam per Alat (x Kali)"
+          bordered={false}
+          className="whiteBox shadow"
+          style={{ height: '100%' }}
+        >
+          <ResponsiveContainer width="100%" height={235}>
+            <BarChart data={freqChartData} layout="vertical" margin={{ top: 5, right: 24, bottom: 5, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" allowDecimals={false} tickFormatter={(v) => `${v}x`} />
+              <YAxis type="category" dataKey="nama" width={150} tick={{ fontSize: 11.5 }} />
+              <Tooltip
+                formatter={(v) => [`${v}x Dipinjam`, 'Frekuensi']}
+                labelFormatter={(_, payload) => payload?.[0]?.payload?.fullNama || ''}
+              />
+              <Bar dataKey="jumlah" name="Frekuensi Pinjam" fill="#0958d9" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </Col>
+
+      <Col xs={24} lg={12}>
+        <Card
+          title="Aktivitas Peminjaman & Mutasi per Satker / Personel"
+          bordered={false}
+          className="whiteBox shadow"
+          style={{ height: '100%' }}
+        >
+          <ResponsiveContainer width="100%" height={235}>
+            <BarChart data={satkerChartData} layout="vertical" margin={{ top: 5, right: 24, bottom: 5, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" allowDecimals={false} tickFormatter={(v) => `${v} BAST`} />
+              <YAxis type="category" dataKey="nama" width={155} tick={{ fontSize: 11.5 }} />
+              <Tooltip
+                formatter={(v) => [`${v} Dokumen BAST`, 'Total Aktivitas']}
+                labelFormatter={(_, payload) => payload?.[0]?.payload?.fullNama || ''}
+              />
+              <Bar dataKey="jumlah" name="Jumlah BAST" fill="#08979c" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </Col>
     </Row>
+  );
+}
+
+function SirkulasiFormWithRiskAlert({ fields, isUpdateForm = false }) {
+  const form = Form.useFormInstance();
+  const kodeBmn = Form.useWatch('kode_bmn', form);
+  const [riskInfo, setRiskInfo] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const kode = typeof kodeBmn === 'object' ? kodeBmn?.kode_bmn : kodeBmn;
+    if (!kode || String(kode).trim() === '') {
+      setRiskInfo(null);
+      return;
+    }
+    request
+      .get({ entity: `aset/risk-check?kode_bmn=${encodeURIComponent(kode)}` })
+      .then((res) => {
+        if (!active || !res?.success || !res?.result) return;
+        setRiskInfo(res.result);
+        if (res.result.warnings?.length) {
+          const isErr = res.result.severity === 'error';
+          notification[isErr ? 'error' : 'warning']({
+            message: isErr
+              ? `PERINGATAN KERAS: Aset ${res.result.aset?.kode_bmn} Bermasalah!`
+              : `Peringatan Dini: Aset ${res.result.aset?.kode_bmn} Dalam Pengawasan`,
+            description: res.result.warnings[0],
+            placement: 'topRight',
+            duration: 6,
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setRiskInfo(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [kodeBmn]);
+
+  return (
+    <>
+      {riskInfo && (
+        <Alert
+          type={riskInfo.severity || 'info'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={
+            riskInfo.severity === 'error'
+              ? `PERINGATAN KERAS: ${riskInfo.aset?.nama_perangkat} (${riskInfo.aset?.kode_bmn}) Bermasalah!`
+              : riskInfo.severity === 'warning'
+                ? `PERINGATAN DINI: ${riskInfo.aset?.nama_perangkat} (${riskInfo.aset?.kode_bmn}) Perlu Pengawasan`
+                : `Status Aset Normal & Tersedia (${riskInfo.aset?.kode_bmn})`
+          }
+          description={
+            riskInfo.warnings?.length ? (
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {riskInfo.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            ) : (
+              `Klaster K-Means: ${riskInfo.kmeans?.klaster_label || 'Normal'} | Kondisi: ${riskInfo.aset?.kondisi} | Status: ${riskInfo.aset?.status_operasional}`
+            )
+          }
+        />
+      )}
+      <DynamicForm fields={fields} isUpdateForm={isUpdateForm} />
+    </>
   );
 }
 
@@ -245,7 +439,11 @@ export default function SirkulasiPage() {
   return (
     <>
       <SirkulasiIsometricChart />
-      <CrudModule createForm={<DynamicForm fields={fields} />} updateForm={<DynamicForm fields={fields} isUpdateForm />} config={config} />
+      <CrudModule
+        createForm={<SirkulasiFormWithRiskAlert fields={fields} />}
+        updateForm={<SirkulasiFormWithRiskAlert fields={fields} isUpdateForm />}
+        config={config}
+      />
     </>
   );
 }

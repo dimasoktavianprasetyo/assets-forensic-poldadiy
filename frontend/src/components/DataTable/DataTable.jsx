@@ -155,7 +155,29 @@ export default function DataTable({ config, extra = [] }) {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState({});
+  const [sortOrder, setSortOrder] = useState('newest');
   const [dynamicOptions, setDynamicOptions] = useState({});
+
+  const hasValueField = Boolean(fields?.nilai_perolehan || fields?.total_biaya);
+  const hasDateField = Boolean(fields?.tgl_perolehan || fields?.tgl_pinjam || fields?.tgl_lapor || fields?.tgl_rekon);
+  const sortOptions = [
+    { value: 'newest', label: 'Urut: Terbaru' },
+    { value: 'oldest', label: 'Urut: Terlama' },
+    { value: 'name_asc', label: 'Urut: Nama A - Z' },
+    { value: 'name_desc', label: 'Urut: Nama Z - A' },
+    ...(hasDateField
+      ? [
+          { value: 'date_desc', label: 'Urut: Tanggal Terbaru' },
+          { value: 'date_asc', label: 'Urut: Tanggal Terlama' },
+        ]
+      : []),
+    ...(hasValueField
+      ? [
+          { value: 'value_desc', label: 'Urut: Nilai Tertinggi' },
+          { value: 'value_asc', label: 'Urut: Nilai Terendah' },
+        ]
+      : []),
+  ];
 
   const staticFilterFields = fields
     ? Object.entries(fields)
@@ -203,15 +225,17 @@ export default function DataTable({ config, extra = [] }) {
         }
       });
       const qVal = extraOpts.q !== undefined ? extraOpts.q : searchQuery;
+      const sortVal = extraOpts.sort !== undefined ? extraOpts.sort : sortOrder;
       const options = {
         page: extraOpts.page || 1,
         items: extraOpts.items || 10,
+        sort: sortVal,
         ...(qVal ? { q: qVal, fields: searchConfig?.searchFields || '' } : {}),
         ...cleanFilters,
       };
       dispatch(crud.list({ entity, options }));
     },
-    [dispatch, entity, searchConfig?.searchFields, searchQuery, activeFilters]
+    [dispatch, entity, searchConfig?.searchFields, searchQuery, activeFilters, sortOrder]
   );
 
   const handelDataTableLoad = useCallback(
@@ -233,19 +257,28 @@ export default function DataTable({ config, extra = [] }) {
     fetchList({ filters: nextFilters, page: 1 });
   };
 
+  const handleSortChange = (val) => {
+    const nextSort = val || 'newest';
+    setSortOrder(nextSort);
+    fetchList({ sort: nextSort, page: 1 });
+  };
+
   const handleResetFilters = () => {
     setSearchQuery('');
     setActiveFilters({});
-    dispatch(crud.list({ entity, options: { page: 1, items: 10 } }));
+    setSortOrder('newest');
+    dispatch(crud.list({ entity, options: { page: 1, items: 10, sort: 'newest' } }));
   };
 
   const hasActiveFilter =
     Boolean(searchQuery) ||
+    sortOrder !== 'newest' ||
     Object.values(activeFilters).some((v) => v !== undefined && v !== null && v !== '');
 
   useEffect(() => {
     setSearchQuery('');
     setActiveFilters({});
+    setSortOrder('newest');
     setDynamicOptions({});
     dispatch(crud.list({ entity }));
   }, [entity]);
@@ -276,31 +309,35 @@ export default function DataTable({ config, extra = [] }) {
         }}
       ></PageHeader>
 
-      {allFilterFields.length > 0 && (
-        <Space wrap style={{ marginBottom: 14, width: '100%' }}>
-          <span style={{ color: '#64748b', fontSize: 13 }}>
-            <FilterOutlined style={{ marginRight: 6 }} />
-            Filter:
-          </span>
-          {allFilterFields.map((f) => (
-            <Select
-              key={f.key}
-              allowClear
-              showSearch
-              placeholder={f.label || f.key}
-              value={activeFilters[f.key]}
-              onChange={(val) => handleFilterChange(f.key, val)}
-              style={{ minWidth: 175 }}
-              options={f.options.map((o) => ({ value: o.value, label: o.label }))}
-            />
-          ))}
-          {hasActiveFilter && (
-            <Button icon={<ClearOutlined />} onClick={handleResetFilters}>
-              Reset Filter
-            </Button>
-          )}
-        </Space>
-      )}
+      <Space wrap style={{ marginBottom: 14, width: '100%' }}>
+        <span style={{ color: '#64748b', fontSize: 13 }}>
+          <FilterOutlined style={{ marginRight: 6 }} />
+          Filter:
+        </span>
+        {allFilterFields.map((f) => (
+          <Select
+            key={f.key}
+            allowClear
+            showSearch
+            placeholder={f.label || f.key}
+            value={activeFilters[f.key]}
+            onChange={(val) => handleFilterChange(f.key, val)}
+            style={{ minWidth: 175 }}
+            options={f.options.map((o) => ({ value: o.value, label: o.label }))}
+          />
+        ))}
+        <Select
+          value={sortOrder}
+          onChange={handleSortChange}
+          style={{ minWidth: 180 }}
+          options={sortOptions}
+        />
+        {hasActiveFilter && (
+          <Button icon={<ClearOutlined />} onClick={handleResetFilters}>
+            Reset Filter
+          </Button>
+        )}
+      </Space>
 
       <Table
         columns={dataTableColumns}

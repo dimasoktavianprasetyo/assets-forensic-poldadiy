@@ -14,8 +14,13 @@ router.post('/logout', requireAuth, logoutHandler);
 router.post('/kmeans/run', requireAuth, requireRole(['pengawas_internal', 'admin_subbagrenmin']), async (req, res) => {
   try {
     const k = Number(req.body?.k || 3);
-    const result = await executeAndPersistKMeans(req.user.id_user, k);
-    await logActivity(req.user.id_user, `Eksekusi K-Means Clustering (K=${k})`, req);
+    const forceRetrain = Boolean(req.body?.retrain);
+    const result = await executeAndPersistKMeans(req.user.id_user, k, forceRetrain);
+    await logActivity(
+      req.user.id_user,
+      forceRetrain ? `Pelatihan Ulang Model 10k & Deteksi K-Means (K=${k})` : `Deteksi K-Means Aset Operasional (K=${k})`,
+      req
+    );
     return res.status(200).json({ success: true, result });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -39,9 +44,17 @@ router.get('/kmeans/latest', requireAuth, async (req, res) => {
       `SELECT h.id_hasil AS id, a.kode_bmn, a.nama_perangkat, a.nilai_perolehan, a.masa_manfaat_thn, a.tgl_perolehan,
               h.x1_raw, h.x2_raw, h.x3_raw, h.skor_x1_norm AS x1, h.skor_x2_norm AS x2, h.skor_x3_norm AS x3,
               h.jarak_euclidean AS jarak, h.klaster_label AS klaster, h.probabilitas_risiko AS risiko,
-              COALESCE((SELECT SUM(p.total_biaya) FROM pemeliharaan_aset p WHERE p.removed = 0 AND (p.id_aset = a.id_aset OR p.kode_bmn = a.kode_bmn)), 0) AS total_biaya_rp
-       FROM hasil_klaster_aset h JOIN aset_tik a ON h.id_aset = a.id_aset
-       WHERE h.id_analisis = ? ORDER BY h.probabilitas_risiko DESC`,
+              COALESCE(p.total_biaya_rp, 0) AS total_biaya_rp
+       FROM hasil_klaster_aset h
+       JOIN aset_tik a ON h.id_aset = a.id_aset
+       LEFT JOIN (
+         SELECT id_aset, SUM(total_biaya) AS total_biaya_rp
+         FROM pemeliharaan_aset
+         WHERE removed = 0
+         GROUP BY id_aset
+       ) p ON p.id_aset = a.id_aset
+       WHERE h.id_analisis = ?
+       ORDER BY h.probabilitas_risiko DESC`,
       [ana.id_analisis]
     );
     const cNormal = centroids.find((c) => c.klaster === 'Normal') || {
@@ -85,6 +98,19 @@ router.get('/kmeans/latest', requireAuth, async (req, res) => {
         risiko: row.risiko,
       };
     });
+    const parsedMeta = JSON.parse(ana.elbow_json || '[]');
+    const elbowArr = Array.isArray(parsedMeta) ? parsedMeta : parsedMeta.elbow || [];
+    let trainingCount = !Array.isArray(parsedMeta) && parsedMeta.training_count ? parsedMeta.training_count : 0;
+    const trainingDist = !Array.isArray(parsedMeta) && parsedMeta.training_distribution ? parsedMeta.training_distribution : {};
+    if (!trainingCount) {
+      try {
+        const [trCnt] = await pool.query('SELECT COUNT(*) AS c FROM dataset_latih_kmeans');
+        trainingCount = Number(trCnt[0]?.c || items.length);
+      } catch {
+        trainingCount = items.length;
+      }
+    }
+
     return res.status(200).json({
       success: true,
       result: {
@@ -92,9 +118,337 @@ router.get('/kmeans/latest', requireAuth, async (req, res) => {
         nilai_k: ana.nilai_k,
         sse_score: Number(ana.sse_score),
         silhouette_score: Number(ana.silhouette_score),
-        elbow: JSON.parse(ana.elbow_json || '[]'),
+        elbow: elbowArr,
+        training_count: trainingCount,
+        training_distribution: trainingDist,
+        model_path: 'kmeans_model.pkl',
         centroids,
         items,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Analitik & Visualisasi Eksplorasi 10.000 Data Pelatihan Model (Tab 2 K-Means)
+router.get('/kmeans/training-analytics', requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const [rows] = await pool.query(
+      `SELECT kode_sampel, kategori_perangkat, kode_skenario, skenario_pola,
+              nilai_perolehan, nilai_buku, frekuensi_servis, total_biaya_servis,
+              rasio_biaya_buku, durasi_sirkulasi_hari, status_qc_dominan,
+              ketepatan_kembali, label_referensi
+       FROM dataset_latih_kmeans`
+    );
+
+    if (!rows.length) {
+      return res.status(200).json({ success: true, result: { total_count: 0 } });
+    }
+
+    let maxX1 = 1;
+    let maxX2 = 1;
+    let maxX3 = 1;
+    for (const r of rows) {
+      if (Number(r.frekuensi_servis) > maxX1) maxX1 = Number(r.frekuensi_servis);
+      if (Number(r.rasio_biaya_buku) > maxX2) maxX2 = Number(r.rasio_biaya_buku);
+      if (Number(r.durasi_sirkulasi_hari) > maxX3) maxX3 = Number(r.durasi_sirkulasi_hari);
+    }
+
+    const classCounts = { Normal: 0, Waspada: 0, 'Anomali / Indikasi Fraud': 0 };
+
+    // 1. Histogram X2 (16 bin: 0.0 s/d 3.2, lebar 0.2)
+    const histX2 = Array.from({ length: 16 }, (_, i) => ({
+      bin: `${(i * 0.2).toFixed(1)}-${((i + 1) * 0.2).toFixed(1)}`,
+      mid: Number(((i + 0.5) * 0.2).toFixed(2)),
+      Normal: 0,
+      Waspada: 0,
+      Anomali: 0,
+      total: 0,
+    }));
+
+    // 2. Histogram X3 (15 bin: 0 s/d 90 hari, lebar 6 hari)
+    const histX3 = Array.from({ length: 15 }, (_, i) => ({
+      bin: `${i * 6}-${(i + 1) * 6}h`,
+      mid: i * 6 + 3,
+      Normal: 0,
+      Waspada: 0,
+      Anomali: 0,
+      total: 0,
+    }));
+
+    // 3. 2D Heatmap Matrix: X1 (0..4+) x 10 Kolom Rentang Rasio Biaya X2
+    const x2Bands = [
+      { label: '0%', max: 0.001 },
+      { label: '1-15%', max: 0.15 },
+      { label: '16-35%', max: 0.35 },
+      { label: '36-75%', max: 0.75 },
+      { label: '76-115%', max: 1.15 },
+      { label: '116-155%', max: 1.55 },
+      { label: '156-195%', max: 1.95 },
+      { label: '196-235%', max: 2.35 },
+      { label: '236-275%', max: 2.75 },
+      { label: '>275%', max: Infinity },
+    ];
+    const x1Rows = ['0x Servis', '1x Servis', '2x Servis', '3x Servis', '4x+ Servis'];
+    const heatmapGrid = x1Rows.map((rLabel) => ({
+      rowLabel: rLabel,
+      cells: x2Bands.map((b) => ({ band: b.label, count: 0, riskSum: 0, avgRisk: 0 })),
+    }));
+
+    // 4. Agregasi Skenario untuk Cleveland Dot Plot
+    const scenarioMap = new Map();
+
+    // 5. Stratified sample ~650 titik untuk Dense Gradient Scatter Cloud
+    const stride = Math.max(1, Math.floor(rows.length / 650));
+    const scatterCloud = [];
+
+    rows.forEach((r, idx) => {
+      const x1 = Number(r.frekuensi_servis || 0);
+      const x2 = Number(r.rasio_biaya_buku || 0);
+      const x3 = Number(r.durasi_sirkulasi_hari || 0);
+      const n1 = x1 / maxX1;
+      const n2 = x2 / maxX2;
+      const n3 = x3 / maxX3;
+      const risiko = Math.min(99, Math.max(4, Math.round((Math.sqrt(n1 * n1 + n2 * n2 + n3 * n3) / Math.sqrt(3)) * 100)));
+
+      const lbl = r.label_referensi || 'Normal';
+      classCounts[lbl] = (classCounts[lbl] || 0) + 1;
+      const shortKey = lbl.includes('Anomali') ? 'Anomali' : lbl;
+
+      const b2 = Math.min(15, Math.max(0, Math.floor(x2 / 0.2)));
+      histX2[b2][shortKey] += 1;
+      histX2[b2].total += 1;
+
+      const b3 = Math.min(14, Math.max(0, Math.floor(x3 / 6)));
+      histX3[b3][shortKey] += 1;
+      histX3[b3].total += 1;
+
+      const rIdx = Math.min(4, Math.max(0, Math.round(x1)));
+      const cIdx = x2Bands.findIndex((b) => x2 <= b.max);
+      const cell = heatmapGrid[rIdx].cells[cIdx === -1 ? x2Bands.length - 1 : cIdx];
+      cell.count += 1;
+      cell.riskSum += risiko;
+
+      const scKey = `${r.kode_skenario}|${r.kategori_perangkat}`;
+      if (!scenarioMap.has(scKey)) {
+        scenarioMap.set(scKey, {
+          key: scKey,
+          kode_skenario: r.kode_skenario,
+          skenario_pola: r.skenario_pola,
+          kategori: r.kategori_perangkat,
+          klaster: lbl,
+          count: 0,
+          sumRisk: 0,
+          sumX1: 0,
+          sumX2: 0,
+          sumX3: 0,
+        });
+      }
+      const scObj = scenarioMap.get(scKey);
+      scObj.count += 1;
+      scObj.sumRisk += risiko;
+      scObj.sumX1 += x1;
+      scObj.sumX2 += x2;
+      scObj.sumX3 += x3;
+
+      if (idx % stride === 0 && scatterCloud.length < 680) {
+        scatterCloud.push({
+          kode_sampel: r.kode_sampel,
+          skenario: r.kode_skenario,
+          klaster: lbl,
+          x1,
+          x2: Number(x2.toFixed(3)),
+          x3,
+          x1_norm: Number(n1.toFixed(3)),
+          x2_norm: Number(n2.toFixed(3)),
+          x3_norm: Number(n3.toFixed(3)),
+          risiko,
+        });
+      }
+    });
+
+    heatmapGrid.forEach((row) => {
+      row.cells.forEach((c) => {
+        c.avgRisk = c.count > 0 ? Math.round(c.riskSum / c.count) : 0;
+        delete c.riskSum;
+      });
+    });
+
+    // Ringkasan 8 skenario utama + breakdown kategori teratas untuk Cleveland Dot Plot
+    const byScenarioOnly = new Map();
+    for (const v of scenarioMap.values()) {
+      if (!byScenarioOnly.has(v.kode_skenario)) {
+        byScenarioOnly.set(v.kode_skenario, {
+          kode_skenario: v.kode_skenario,
+          label: `${v.kode_skenario}: ${v.skenario_pola.replace(/^(Normal|Waspada|Anomali)\s*-\s*/, '')}`,
+          klaster: v.klaster,
+          count: 0,
+          sumRisk: 0,
+          sumX1: 0,
+          sumX2: 0,
+          sumX3: 0,
+        });
+      }
+      const s = byScenarioOnly.get(v.kode_skenario);
+      s.count += v.count;
+      s.sumRisk += v.sumRisk;
+      s.sumX1 += v.sumX1;
+      s.sumX2 += v.sumX2;
+      s.sumX3 += v.sumX3;
+    }
+
+    const clevelandDots = Array.from(byScenarioOnly.values())
+      .map((s) => ({
+        kode_skenario: s.kode_skenario,
+        label: s.label,
+        klaster: s.klaster,
+        count: s.count,
+        avg_risk: Number((s.sumRisk / Math.max(1, s.count)).toFixed(1)),
+        avg_x1: Number((s.sumX1 / Math.max(1, s.count)).toFixed(2)),
+        avg_x2_pct: Number(((s.sumX2 / Math.max(1, s.count)) * 100).toFixed(1)),
+        avg_x3: Number((s.sumX3 / Math.max(1, s.count)).toFixed(1)),
+      }))
+      .sort((a, b) => a.avg_risk - b.avg_risk);
+
+    const sampleRows = rows.slice(0, 120).map((r, i) => ({
+      id: i + 1,
+      kode_sampel: r.kode_sampel,
+      kategori_perangkat: r.kategori_perangkat,
+      kode_skenario: r.kode_skenario,
+      skenario_pola: r.skenario_pola,
+      nilai_buku: Number(r.nilai_buku),
+      frekuensi_servis: Number(r.frekuensi_servis),
+      total_biaya_servis: Number(r.total_biaya_servis),
+      rasio_biaya_buku: Number(r.rasio_biaya_buku),
+      durasi_sirkulasi_hari: Number(r.durasi_sirkulasi_hari),
+      status_qc_dominan: r.status_qc_dominan,
+      ketepatan_kembali: r.ketepatan_kembali,
+      label_referensi: r.label_referensi,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      result: {
+        total_count: rows.length,
+        class_counts: classCounts,
+        scatter_cloud: scatterCloud,
+        hist_x2: histX2,
+        hist_x3: histX3,
+        heatmap: {
+          bands: x2Bands.map((b) => b.label),
+          rows: heatmapGrid,
+        },
+        cleveland_dots: clevelandDots,
+        sample_rows: sampleRows,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Cek Kesehatan & Risiko Fraud Aset (Real-time warning saat input Mutasi/Sirkulasi)
+router.get('/aset/risk-check', requireAuth, async (req, res) => {
+  try {
+    const kodeBmn = String(req.query.kode_bmn || '').trim();
+    if (!kodeBmn) {
+      return res.status(400).json({ success: false, message: 'Parameter kode_bmn wajib diisi' });
+    }
+    const pool = await getPool();
+    const [assets] = await pool.query(
+      'SELECT id_aset, kode_bmn, nama_perangkat, kondisi, status_operasional FROM aset_tik WHERE kode_bmn = ? AND removed = 0 LIMIT 1',
+      [kodeBmn]
+    );
+    if (!assets.length) {
+      return res.status(404).json({ success: false, message: 'Aset tidak ditemukan' });
+    }
+    const aset = assets[0];
+
+    const [kmeansRows] = await pool.query(
+      `SELECT h.klaster_label, h.probabilitas_risiko, h.x1_raw, h.x2_raw, h.x3_raw
+       FROM hasil_klaster_aset h
+       WHERE h.id_aset = ?
+       ORDER BY h.id_analisis DESC LIMIT 1`,
+      [aset.id_aset]
+    );
+    const km = kmeansRows[0] || null;
+
+    const [alertRows] = await pool.query(
+      `SELECT tingkat_risiko, indikasi, status_alert
+       FROM early_warning_alert
+       WHERE id_aset = ? AND status_alert != 'Selesai / Valid'
+       ORDER BY id_alert DESC LIMIT 1`,
+      [aset.id_aset]
+    );
+    const alert = alertRows[0] || null;
+
+    const [qcRows] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM pemeliharaan_aset WHERE removed = 0 AND (id_aset = ? OR kode_bmn = ?) AND status_qc = 'Servis Ulang'`,
+      [aset.id_aset, kodeBmn]
+    );
+    const servisUlangCnt = Number(qcRows[0]?.cnt || 0);
+
+    const [lateRows] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM sirkulasi_peminjaman WHERE removed = 0 AND kode_bmn = ? AND status_pinjam = 'Terlambat'`,
+      [kodeBmn]
+    );
+    const terlambatCnt = Number(lateRows[0]?.cnt || 0);
+
+    const warnings = [];
+    let severity = 'success';
+
+    if (aset.status_operasional !== 'Tersedia') {
+      warnings.push(`Status operasional saat ini "${aset.status_operasional}" (tidak tersedia untuk mutasi/peminjaman baru).`);
+      severity = 'error';
+    }
+    if (aset.kondisi === 'RB') {
+      warnings.push('Kondisi fisik tercatat Rusak Berat (RB) — tidak layak dimutasikan sebelum perbaikan/penghapusan.');
+      severity = 'error';
+    } else if (aset.kondisi === 'RR') {
+      warnings.push('Kondisi fisik tercatat Rusak Ringan (RR) — wajib cek kelayakan sebelum serah terima.');
+      if (severity === 'success') severity = 'warning';
+    }
+
+    if (km) {
+      if (km.klaster_label.includes('Anomali')) {
+        warnings.push(
+          `Terdeteksi klaster K-Means: ${km.klaster_label} (Skor Risiko ${km.probabilitas_risiko}%, ${Math.round(km.x1_raw)}x servis, rasio biaya ${(Number(km.x2_raw) * 100).toFixed(1)}%, durasi ${Math.round(km.x3_raw)} hr).`
+        );
+        severity = 'error';
+      } else if (km.klaster_label === 'Waspada') {
+        warnings.push(
+          `Terdeteksi klaster K-Means: Waspada (Skor Risiko ${km.probabilitas_risiko}%). Perlu pengawasan khusus.`
+        );
+        if (severity === 'success') severity = 'warning';
+      }
+    }
+
+    if (servisUlangCnt > 0) {
+      warnings.push(`Terdapat ${servisUlangCnt} riwayat pemeliharaan dengan status "Servis Ulang" (belum lolos QC).`);
+      if (severity === 'success') severity = 'warning';
+    }
+    if (terlambatCnt > 0) {
+      warnings.push(`Terdapat ${terlambatCnt} riwayat sirkulasi dengan status "Terlambat".`);
+      if (severity === 'success') severity = 'warning';
+    }
+    if (alert) {
+      warnings.push(`Early Warning (${alert.tingkat_risiko}): ${alert.indikasi} [Status: ${alert.status_alert}]`);
+      if (alert.tingkat_risiko === 'Merah') severity = 'error';
+      else if (severity === 'success') severity = 'warning';
+    }
+
+    return res.status(200).json({
+      success: true,
+      result: {
+        aset,
+        kmeans: km,
+        alert,
+        servis_ulang_count: servisUlangCnt,
+        terlambat_count: terlambatCnt,
+        severity,
+        warnings,
       },
     });
   } catch (err) {
@@ -110,7 +464,8 @@ router.get('/alerts', requireAuth, async (req, res) => {
       `SELECT e.id_alert AS _id, a.kode_bmn, a.nama_perangkat, e.tingkat_risiko, e.indikasi, e.status_alert AS status_audit, e.created_at
        FROM early_warning_alert e
        JOIN aset_tik a ON e.id_aset = a.id_aset
-       ORDER BY e.id_alert DESC`
+       ORDER BY e.id_alert DESC
+       LIMIT 300`
     );
     return res.status(200).json({ success: true, result: rows });
   } catch (err) {
@@ -231,11 +586,13 @@ router.get('/dashboard/summary', requireAuth, async (req, res) => {
           total_biaya_rp: Math.round(Number(row.total_biaya_rp || 0)),
         };
       });
+      const parsedDashMeta = JSON.parse(ana.elbow_json || '[]');
+      const dashElbow = Array.isArray(parsedDashMeta) ? parsedDashMeta : parsedDashMeta.elbow || [];
       kmeans = {
         nilai_k: ana.nilai_k,
         sse_score: Number(ana.sse_score),
         silhouette_score: Number(ana.silhouette_score),
-        elbow: JSON.parse(ana.elbow_json || '[]'),
+        elbow: dashElbow,
         centroids,
         items,
       };
@@ -563,6 +920,201 @@ router.patch('/roles/:id', requireAuth, requireRole(['admin_subbagrenmin']), asy
       },
       message: 'Hak akses RBAC berhasil diperbarui',
     });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Notifikasi Live Sesuai 5 Role RBAC (tanpa tabel tambahan)
+router.get('/notifications', requireAuth, async (req, res) => {
+  try {
+    const role = req.user?.kode_role || 'admin_subbagrenmin';
+    const pool = await getPool();
+    const list = [];
+    const fmtWaktu = (dt) => {
+      if (!dt) return '-';
+      const d = new Date(dt);
+      if (Number.isNaN(d.getTime())) return '-';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    if (['admin_subbagrenmin', 'operator_teknisi'].includes(role)) {
+      const [sirkRows] = await pool.query(
+        `SELECT id_pinjam, no_bast, kode_bmn, peminjam_satker, status_pinjam, created_at
+         FROM sirkulasi_peminjaman
+         WHERE removed = 0 AND status_pinjam IN ('Menunggu Verifikasi', 'Terlambat')
+         ORDER BY id_pinjam DESC LIMIT 10`
+      );
+      sirkRows.forEach((r) => {
+        list.push({
+          id: `sirk-${r.id_pinjam}`,
+          kategori: 'Sirkulasi & BAST',
+          title: `${r.no_bast} (${r.status_pinjam})`,
+          desc: `Perangkat ${r.kode_bmn || '-'} - ${r.peminjam_satker || '-'}`,
+          tag: r.status_pinjam === 'Terlambat' ? 'Terlambat' : 'Verifikasi',
+          color: r.status_pinjam === 'Terlambat' ? '#cf1322' : '#d48806',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/sirkulasi',
+        });
+      });
+
+      const [pemRows] = await pool.query(
+        `SELECT id_servis, no_tiket, kode_bmn, status_qc, created_at
+         FROM pemeliharaan_aset
+         WHERE removed = 0 AND status_qc IN ('Menunggu QC', 'Servis Ulang')
+         ORDER BY id_servis DESC LIMIT 10`
+      );
+      pemRows.forEach((r) => {
+        list.push({
+          id: `pem-${r.id_servis}`,
+          kategori: 'Pemeliharaan & QC',
+          title: `${r.no_tiket} (${r.status_qc})`,
+          desc: `Kode BMN ${r.kode_bmn || '-'} perlu tindak lanjut teknis`,
+          tag: r.status_qc,
+          color: r.status_qc === 'Servis Ulang' ? '#cf1322' : '#d48806',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/pemeliharaan',
+        });
+      });
+    }
+
+    if (role === 'satker') {
+      const [sirkRows] = await pool.query(
+        `SELECT id_pinjam, no_bast, kode_bmn, status_pinjam, created_at
+         FROM sirkulasi_peminjaman
+         WHERE removed = 0 AND status_pinjam IN ('Menunggu Verifikasi', 'Dipinjam', 'Terlambat')
+         ORDER BY id_pinjam DESC LIMIT 10`
+      );
+      sirkRows.forEach((r) => {
+        list.push({
+          id: `satker-sirk-${r.id_pinjam}`,
+          kategori: 'Sirkulasi & BAST',
+          title: `${r.no_bast} (${r.status_pinjam})`,
+          desc: `Perangkat ${r.kode_bmn || '-'}`,
+          tag: r.status_pinjam,
+          color: r.status_pinjam === 'Terlambat' ? '#cf1322' : r.status_pinjam === 'Dipinjam' ? '#0958d9' : '#595959',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/sirkulasi',
+        });
+      });
+
+      const [pemRows] = await pool.query(
+        `SELECT id_servis, no_tiket, kode_bmn, status_verifikasi, created_at
+         FROM pemeliharaan_aset
+         WHERE removed = 0 AND status_verifikasi = 'Proses'
+         ORDER BY id_servis DESC LIMIT 8`
+      );
+      pemRows.forEach((r) => {
+        list.push({
+          id: `satker-pem-${r.id_servis}`,
+          kategori: 'Pemeliharaan & QC',
+          title: `Tiket ${r.no_tiket} (${r.status_verifikasi})`,
+          desc: `Laporan gangguan perangkat ${r.kode_bmn || '-'}`,
+          tag: 'Proses',
+          color: '#0958d9',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/pemeliharaan',
+        });
+      });
+    }
+
+    if (['admin_subbagrenmin', 'pengawas_internal', 'kabid_tik'].includes(role)) {
+      const whereRisk = role === 'kabid_tik' ? "AND e.tingkat_risiko = 'Merah'" : '';
+      const [alertRows] = await pool.query(
+        `SELECT e.id_alert, a.kode_bmn, a.nama_perangkat, e.tingkat_risiko, e.status_alert, e.created_at
+         FROM early_warning_alert e JOIN aset_tik a ON e.id_aset = a.id_aset
+         WHERE e.status_alert = 'Belum Diinvestigasi' ${whereRisk}
+         ORDER BY e.id_alert DESC LIMIT 10`
+      );
+      alertRows.forEach((r) => {
+        list.push({
+          id: `ew-${r.id_alert}`,
+          kategori: 'Early Warning & Audit',
+          title: `${r.nama_perangkat} (${r.kode_bmn})`,
+          desc: `Early Warning ${r.tingkat_risiko} - ${r.status_alert}`,
+          tag: r.tingkat_risiko,
+          color: r.tingkat_risiko === 'Merah' ? '#cf1322' : '#d48806',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/early-warning',
+        });
+      });
+    }
+
+    if (['pengawas_internal', 'kabid_tik'].includes(role)) {
+      const [rekonRows] = await pool.query(
+        `SELECT id_rekon, no_bar, satker, status_rekon, created_at
+         FROM rekonsiliasi_bmn
+         WHERE removed = 0 AND status_rekon IN ('Selisih Lokasi', 'Selisih Kondisi')
+         ORDER BY id_rekon DESC LIMIT 6`
+      );
+      rekonRows.forEach((r) => {
+        list.push({
+          id: `rekon-${r.id_rekon}`,
+          kategori: 'Rekonsiliasi BMN',
+          title: `${r.no_bar} (${r.status_rekon})`,
+          desc: `Temuan Stock Opname - ${r.satker}`,
+          tag: r.status_rekon,
+          color: '#cf1322',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/rekonsiliasi',
+        });
+      });
+    }
+
+    if (role === 'pengawas_internal') {
+      const [lateRows] = await pool.query(
+        `SELECT id_pinjam, no_bast, kode_bmn, created_at
+         FROM sirkulasi_peminjaman
+         WHERE removed = 0 AND status_pinjam = 'Terlambat'
+         ORDER BY id_pinjam DESC LIMIT 6`
+      );
+      lateRows.forEach((r) => {
+        list.push({
+          id: `audit-late-${r.id_pinjam}`,
+          kategori: 'Sirkulasi & BAST',
+          title: `${r.no_bast} (Terlambat Kembali)`,
+          desc: `Perangkat ${r.kode_bmn || '-'} melewati batas kembali`,
+          tag: 'Terlambat',
+          color: '#cf1322',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/sirkulasi',
+        });
+      });
+    }
+
+    if (role === 'kabid_tik') {
+      const [auditRows] = await pool.query(
+        `SELECT ai.id_audit, ai.hasil_investigasi, ai.tgl_audit AS created_at, a.kode_bmn
+         FROM audit_investigasi ai
+         JOIN early_warning_alert e ON ai.id_alert = e.id_alert
+         JOIN aset_tik a ON e.id_aset = a.id_aset
+         ORDER BY ai.id_audit DESC LIMIT 6`
+      );
+      auditRows.forEach((r) => {
+        list.push({
+          id: `audit-res-${r.id_audit}`,
+          kategori: 'Audit Investigasi',
+          title: `Hasil Audit ${r.kode_bmn}`,
+          desc: `Status: ${r.hasil_investigasi}`,
+          tag: 'Audit',
+          color: '#531dab',
+          waktu: fmtWaktu(r.created_at),
+          ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/early-warning',
+        });
+      });
+    }
+
+    list.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    return res.status(200).json({ success: true, result: list });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
