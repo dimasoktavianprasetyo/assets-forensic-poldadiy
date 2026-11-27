@@ -1,7 +1,9 @@
 <div>
-  <img src="frontend/public/Lambang_Polda_DIY.png" alt="Logo Polda D.I. Yogyakarta" height="90" />
+  <img src="frontend/public/Logo_Polri.webp" alt="Logo Polri" height="90" />
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="frontend/public/TIK_POLRI.png" alt="Logo Divisi TIK Polri" height="90" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="frontend/public/Lambang_Polda_DIY.png" alt="Logo Polda D.I. Yogyakarta" height="90" />
 
   <h1>SIM-ASET BID TIK POLDA DIY</h1>
   <p><strong>Sistem Informasi Manajemen Aset TIK (BMN) &amp; Deteksi Dini Indikasi <em>Fraud</em> Berbasis <em>K-Means Clustering</em></strong></p>
