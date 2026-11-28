@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Select, Table, Tag, message } from 'antd';
-import { AlertOutlined, AuditOutlined } from '@ant-design/icons';
+import { useEffect, useMemo, useState } from 'react';
+import dayjs from 'dayjs';
+import { Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd';
+import { AlertOutlined, AuditOutlined, ClearOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import { request } from '@/request';
+import { useDate } from '@/settings';
 
 const PREVIEW_ALERTS = [
   {
@@ -31,10 +33,85 @@ const PREVIEW_ALERTS = [
 ];
 
 export default function EarlyWarningPage() {
+  const { formatDateTime } = useDate();
   const [alerts, setAlerts] = useState(PREVIEW_ALERTS);
   const [loading, setLoading] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState(null);
+  const [searchText, setSearchText] = useState('');
+  const [viewMode, setViewMode] = useState('latest');
+  const [rangeFilter, setRangeFilter] = useState('all');
+  const [riskFilter, setRiskFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [form] = Form.useForm();
+
+  const statusOptions = useMemo(() => {
+    const base = [
+      'Belum Diinvestigasi',
+      'Wajar / Terbukti Rusak',
+      'Mark-up Biaya',
+      'Servis Fiktif',
+      'Penyalahgunaan Sirkulasi',
+    ];
+    const fromData = alerts.map((a) => a.status_audit).filter(Boolean);
+    const merged = Array.from(new Set([...base, ...fromData]));
+    return [
+      { value: 'ALL', label: 'Semua Status Audit' },
+      ...merged.map((s) => ({ value: s, label: s })),
+    ];
+  }, [alerts]);
+
+  const filteredAlerts = useMemo(() => {
+    let source = alerts;
+    if (viewMode === 'latest') {
+      const seen = new Set();
+      source = alerts.filter((a) => {
+        const key = a.kode_bmn || a._id;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    const todayStart = dayjs().startOf('day').valueOf();
+    const yesterdayStart = dayjs().subtract(1, 'day').startOf('day').valueOf();
+    const threeDaysStart = dayjs().subtract(3, 'day').startOf('day').valueOf();
+    const sevenDaysStart = dayjs().subtract(7, 'day').startOf('day').valueOf();
+    const thirtyDaysStart = dayjs().subtract(30, 'day').startOf('day').valueOf();
+    const q = searchText.trim().toLowerCase();
+
+    return source.filter((a) => {
+      if (riskFilter !== 'ALL' && a.tingkat_risiko !== riskFilter) return false;
+      if (statusFilter !== 'ALL' && a.status_audit !== statusFilter) return false;
+      if (rangeFilter !== 'all') {
+        const ts = a.created_at ? new Date(a.created_at).getTime() : 0;
+        if (rangeFilter === 'today' && !(ts >= todayStart)) return false;
+        if (rangeFilter === 'yesterday' && !(ts >= yesterdayStart && ts < todayStart)) return false;
+        if (rangeFilter === '3d' && !(ts >= threeDaysStart && ts < yesterdayStart)) return false;
+        if (rangeFilter === '7d' && !(ts >= sevenDaysStart && ts < threeDaysStart)) return false;
+        if (rangeFilter === '30d' && !(ts >= thirtyDaysStart && ts < sevenDaysStart)) return false;
+      }
+      if (q) {
+        const hay = `${a.kode_bmn || ''} ${a.nama_perangkat || ''} ${a.indikasi || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [alerts, viewMode, rangeFilter, searchText, riskFilter, statusFilter]);
+
+  const hasActiveFilter =
+    Boolean(searchText.trim()) ||
+    viewMode !== 'latest' ||
+    rangeFilter !== 'all' ||
+    riskFilter !== 'ALL' ||
+    statusFilter !== 'ALL';
+
+  const handleResetFilters = () => {
+    setSearchText('');
+    setViewMode('latest');
+    setRangeFilter('all');
+    setRiskFilter('ALL');
+    setStatusFilter('ALL');
+  };
 
   const fetchAlerts = async () => {
     setLoading(true);
@@ -76,6 +153,13 @@ export default function EarlyWarningPage() {
   };
 
   const columns = [
+    {
+      title: 'Tanggal & Jam',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      onCell: () => ({ style: { whiteSpace: 'nowrap' } }),
+      render: (dt) => (dt ? formatDateTime(dt) : '-'),
+    },
     { title: 'Kode BMN', dataIndex: 'kode_bmn', key: 'kode_bmn' },
     { title: 'Perangkat TIK', dataIndex: 'nama_perangkat', key: 'nama_perangkat' },
     {
@@ -116,13 +200,73 @@ export default function EarlyWarningPage() {
         title={
           <span>
             <AlertOutlined style={{ color: '#ff4d4f', marginRight: 8 }} />
-            Early Warning Alert & Audit Investigasi (Pengawas Internal)
+            Early Warning Alert & Audit Investigasi (Pengawas Internal) ({filteredAlerts.length})
           </span>
+        }
+        extra={
+          <Button icon={<SyncOutlined />} onClick={fetchAlerts} loading={loading}>
+            Refresh
+          </Button>
         }
         bordered={false}
         className="whiteBox shadow"
       >
-        <Table rowKey="_id" columns={columns} dataSource={alerts} loading={loading} pagination={{ pageSize: 10 }} />
+        <Space wrap style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
+          <Space wrap>
+            <Input
+              allowClear
+              prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
+              placeholder="Cari Kode BMN, perangkat, atau indikasi..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{ width: 250 }}
+            />
+            <Select
+              value={viewMode}
+              onChange={setViewMode}
+              style={{ minWidth: 165 }}
+              options={[
+                { value: 'latest', label: 'Terbaru per Aset' },
+                { value: 'all', label: 'Semua Riwayat' },
+              ]}
+            />
+            <Select
+              value={rangeFilter}
+              onChange={setRangeFilter}
+              style={{ minWidth: 170 }}
+              options={[
+                { value: 'all', label: 'Sepanjang Masa' },
+                { value: 'today', label: 'Hari Ini' },
+                { value: 'yesterday', label: 'Kemarin' },
+                { value: '3d', label: '2 - 3 Hari yang Lalu' },
+                { value: '7d', label: '4 - 7 Hari yang Lalu' },
+                { value: '30d', label: '8 - 30 Hari yang Lalu' },
+              ]}
+            />
+            <Select
+              value={riskFilter}
+              onChange={setRiskFilter}
+              style={{ minWidth: 160 }}
+              options={[
+                { value: 'ALL', label: 'Semua Tingkat Risiko' },
+                { value: 'Merah', label: 'Merah (Anomali)' },
+                { value: 'Kuning', label: 'Kuning (Waspada)' },
+              ]}
+            />
+            <Select
+              value={statusFilter}
+              onChange={setStatusFilter}
+              style={{ minWidth: 200 }}
+              options={statusOptions}
+            />
+            {hasActiveFilter && (
+              <Button icon={<ClearOutlined />} onClick={handleResetFilters}>
+                Reset Filter
+              </Button>
+            )}
+          </Space>
+        </Space>
+        <Table rowKey="_id" columns={columns} dataSource={filteredAlerts} loading={loading} pagination={{ pageSize: 10 }} />
         <div
           style={{
             marginTop: 14,

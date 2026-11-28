@@ -941,19 +941,31 @@ router.get('/notifications', requireAuth, async (req, res) => {
 
     if (['admin_subbagrenmin', 'operator_teknisi'].includes(role)) {
       const [sirkRows] = await pool.query(
-        `SELECT id_pinjam, no_bast, kode_bmn, peminjam_satker, status_pinjam, created_at
+        `SELECT id_pinjam, no_bast, kode_bmn, peminjam_satker, status_pinjam, tgl_kembali_rencana,
+                DATEDIFF(CURDATE(), tgl_kembali_rencana) AS diff_hari, created_at
          FROM sirkulasi_peminjaman
-         WHERE removed = 0 AND status_pinjam IN ('Menunggu Verifikasi', 'Terlambat')
+         WHERE removed = 0
+           AND (
+             status_pinjam IN ('Menunggu Verifikasi', 'Terlambat')
+             OR (status_pinjam = 'Dipinjam' AND tgl_kembali_rencana IS NOT NULL AND tgl_kembali_rencana <= DATE_ADD(CURDATE(), INTERVAL 3 DAY))
+           )
          ORDER BY id_pinjam DESC LIMIT 10`
       );
       sirkRows.forEach((r) => {
+        const isWait = r.status_pinjam === 'Menunggu Verifikasi';
+        const isOverdue = r.status_pinjam === 'Terlambat' || (r.diff_hari !== null && Number(r.diff_hari) > 0);
+        const titleStatus = isWait
+          ? 'Menunggu Verifikasi'
+          : isOverdue
+            ? 'Terlambat / Lewat Jatuh Tempo'
+            : 'Mendekati Jatuh Tempo';
         list.push({
           id: `sirk-${r.id_pinjam}`,
           kategori: 'Sirkulasi & BAST',
-          title: `${r.no_bast} (${r.status_pinjam})`,
+          title: `${r.no_bast} (${titleStatus})`,
           desc: `Perangkat ${r.kode_bmn || '-'} - ${r.peminjam_satker || '-'}`,
-          tag: r.status_pinjam === 'Terlambat' ? 'Terlambat' : 'Verifikasi',
-          color: r.status_pinjam === 'Terlambat' ? '#cf1322' : '#d48806',
+          tag: isWait ? 'Verifikasi' : isOverdue ? 'Terlambat' : 'Jatuh Tempo',
+          color: isOverdue ? '#cf1322' : '#d48806',
           waktu: fmtWaktu(r.created_at),
           ts: r.created_at ? new Date(r.created_at).getTime() : 0,
           path: '/sirkulasi',
@@ -979,23 +991,50 @@ router.get('/notifications', requireAuth, async (req, res) => {
           path: '/pemeliharaan',
         });
       });
+
+      const [pemDoneRows] = await pool.query(
+        `SELECT id_servis, no_tiket, kode_bmn, status_qc, tgl_selesai, created_at
+         FROM pemeliharaan_aset
+         WHERE removed = 0
+           AND (status_qc = 'Lolos QC' OR status_verifikasi = 'Selesai')
+           AND COALESCE(tgl_selesai, DATE(created_at)) >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+         ORDER BY id_servis DESC LIMIT 5`
+      );
+      pemDoneRows.forEach((r) => {
+        const dt = r.tgl_selesai || r.created_at;
+        list.push({
+          id: `pem-selesai-${r.id_servis}`,
+          kategori: 'Pemeliharaan & QC',
+          title: `${r.no_tiket} (Aset Selesai Perbaikan)`,
+          desc: `Perangkat ${r.kode_bmn || '-'} telah selesai diperbaiki (${r.status_qc || 'Selesai'})`,
+          tag: 'Selesai Perbaikan',
+          color: '#389e0d',
+          waktu: fmtWaktu(dt),
+          ts: dt ? new Date(dt).getTime() : 0,
+          path: '/pemeliharaan',
+        });
+      });
     }
 
     if (role === 'satker') {
       const [sirkRows] = await pool.query(
-        `SELECT id_pinjam, no_bast, kode_bmn, status_pinjam, created_at
+        `SELECT id_pinjam, no_bast, kode_bmn, status_pinjam, tgl_kembali_rencana,
+                DATEDIFF(CURDATE(), tgl_kembali_rencana) AS diff_hari, created_at
          FROM sirkulasi_peminjaman
          WHERE removed = 0 AND status_pinjam IN ('Menunggu Verifikasi', 'Dipinjam', 'Terlambat')
          ORDER BY id_pinjam DESC LIMIT 10`
       );
       sirkRows.forEach((r) => {
+        const isOverdue = r.status_pinjam === 'Terlambat' || (r.status_pinjam === 'Dipinjam' && r.diff_hari !== null && Number(r.diff_hari) > 0);
+        const isDueSoon = r.status_pinjam === 'Dipinjam' && r.diff_hari !== null && Number(r.diff_hari) <= 0 && Number(r.diff_hari) >= -3;
+        const label = isOverdue ? 'Terlambat / Jatuh Tempo' : isDueSoon ? 'Mendekati Jatuh Tempo' : r.status_pinjam;
         list.push({
           id: `satker-sirk-${r.id_pinjam}`,
           kategori: 'Sirkulasi & BAST',
-          title: `${r.no_bast} (${r.status_pinjam})`,
+          title: `${r.no_bast} (${label})`,
           desc: `Perangkat ${r.kode_bmn || '-'}`,
-          tag: r.status_pinjam,
-          color: r.status_pinjam === 'Terlambat' ? '#cf1322' : r.status_pinjam === 'Dipinjam' ? '#0958d9' : '#595959',
+          tag: isOverdue ? 'Terlambat' : isDueSoon ? 'Jatuh Tempo' : r.status_pinjam,
+          color: isOverdue ? '#cf1322' : isDueSoon ? '#d48806' : r.status_pinjam === 'Dipinjam' ? '#0958d9' : '#595959',
           waktu: fmtWaktu(r.created_at),
           ts: r.created_at ? new Date(r.created_at).getTime() : 0,
           path: '/sirkulasi',
@@ -1018,6 +1057,29 @@ router.get('/notifications', requireAuth, async (req, res) => {
           color: '#0958d9',
           waktu: fmtWaktu(r.created_at),
           ts: r.created_at ? new Date(r.created_at).getTime() : 0,
+          path: '/pemeliharaan',
+        });
+      });
+
+      const [pemDoneRows] = await pool.query(
+        `SELECT id_servis, no_tiket, kode_bmn, status_qc, tgl_selesai, created_at
+         FROM pemeliharaan_aset
+         WHERE removed = 0
+           AND (status_qc = 'Lolos QC' OR status_verifikasi = 'Selesai')
+           AND COALESCE(tgl_selesai, DATE(created_at)) >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+         ORDER BY id_servis DESC LIMIT 5`
+      );
+      pemDoneRows.forEach((r) => {
+        const dt = r.tgl_selesai || r.created_at;
+        list.push({
+          id: `satker-pem-selesai-${r.id_servis}`,
+          kategori: 'Pemeliharaan & QC',
+          title: `Tiket ${r.no_tiket} (Aset Selesai Perbaikan)`,
+          desc: `Perangkat ${r.kode_bmn || '-'} telah selesai diperbaiki (${r.status_qc || 'Selesai'})`,
+          tag: 'Selesai Perbaikan',
+          color: '#389e0d',
+          waktu: fmtWaktu(dt),
+          ts: dt ? new Date(dt).getTime() : 0,
           path: '/pemeliharaan',
         });
       });

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Alert, Card, Col, Form, notification, Row, Tag } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Button, Card, Col, Form, notification, Popconfirm, Row, Space, Tag } from 'antd';
+import { CheckCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { request } from '@/request';
 import {
   ResponsiveContainer,
@@ -16,6 +17,8 @@ import {
   Tooltip,
   Legend,
 } from 'recharts';
+import { selectCurrentAdmin } from '@/redux/auth/selectors';
+import { crud } from '@/redux/crud/actions';
 import { selectListItems } from '@/redux/crud/selectors';
 import CrudModule from '@/modules/CrudModule/CrudModule';
 import DynamicForm from '@/forms/DynamicForm';
@@ -353,10 +356,16 @@ function SirkulasiIsometricChart() {
   );
 }
 
-function SirkulasiFormWithRiskAlert({ fields, isUpdateForm = false }) {
+function SirkulasiFormWithRiskAlert({ fields, isUpdateForm = false, isSatker = false }) {
   const form = Form.useFormInstance();
   const kodeBmn = Form.useWatch('kode_bmn', form);
   const [riskInfo, setRiskInfo] = useState(null);
+
+  useEffect(() => {
+    if (isSatker && !isUpdateForm) {
+      form.setFieldsValue({ status_pinjam: 'Menunggu Verifikasi' });
+    }
+  }, [isSatker, isUpdateForm, form]);
 
   useEffect(() => {
     let active = true;
@@ -422,14 +431,90 @@ function SirkulasiFormWithRiskAlert({ fields, isUpdateForm = false }) {
   );
 }
 
+const STATUS_TAG_COLORS = {
+  'Menunggu Verifikasi': '#595959',
+  Dipinjam: '#0958d9',
+  Terlambat: '#cf1322',
+  Selesai: '#389e0d',
+};
+
 export default function SirkulasiPage() {
+  const dispatch = useDispatch();
+  const currentAdmin = useSelector(selectCurrentAdmin);
+  const role = currentAdmin?.role;
+  const isSatker = role === 'satker';
+  const canVerify = ['operator_teknisi', 'admin_subbagrenmin', 'owner'].includes(role);
+  const [verifyingId, setVerifyingId] = useState(null);
+
+  const handleVerify = async (record) => {
+    const id = record?.id_pinjam || record?._id;
+    if (!id) return;
+    setVerifyingId(id);
+    try {
+      const res = await request.patch({
+        entity: `sirkulasi/update/${id}`,
+        jsonData: { status_pinjam: 'Dipinjam' },
+      });
+      if (res?.success) {
+        dispatch(crud.list({ entity: 'sirkulasi' }));
+      }
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const scopedFields = useMemo(
+    () => ({
+      ...fields,
+      tgl_kembali_aktual: {
+        ...fields.tgl_kembali_aktual,
+        disableForForm: isSatker,
+        disableForUpdate: isSatker,
+      },
+      status_pinjam: {
+        ...fields.status_pinjam,
+        disableForForm: isSatker,
+        disableForUpdate: isSatker,
+        customRender: (val, record) => {
+          const id = record?.id_pinjam || record?._id;
+          return (
+            <Space size={6} wrap>
+              <Tag bordered={false} color={STATUS_TAG_COLORS[val] || '#595959'} style={{ margin: 0 }}>
+                {val === 'Selesai' ? 'Selesai / Kembali' : val || '-'}
+              </Tag>
+              {canVerify && val === 'Menunggu Verifikasi' && (
+                <Popconfirm
+                  title="Verifikasi pengajuan sirkulasi ini?"
+                  description="Status akan diubah menjadi Dipinjam dan aset ditandai Dipinjam."
+                  okText="Ya, Verifikasi"
+                  cancelText="Batal"
+                  onConfirm={() => handleVerify(record)}
+                >
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<CheckCircleOutlined />}
+                    loading={verifyingId === id}
+                  >
+                    Verifikasi
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          );
+        },
+      },
+    }),
+    [isSatker, canVerify, verifyingId]
+  );
+
   const config = {
     entity: 'sirkulasi',
     PANEL_TITLE: 'Sirkulasi & BAST Digital',
     DATATABLE_TITLE: 'Daftar Sirkulasi Peminjaman & Mutasi BMN',
     ADD_NEW_ENTITY: 'Ajukan Sirkulasi',
     ENTITY_NAME: 'sirkulasi',
-    fields,
+    fields: scopedFields,
     searchConfig: {
       displayLabels: ['no_bast', 'kode_bmn', 'peminjam_satker'],
       searchFields: 'no_bast,no_surat_perintah,kode_bmn,peminjam_satker',
@@ -440,8 +525,8 @@ export default function SirkulasiPage() {
     <>
       <SirkulasiIsometricChart />
       <CrudModule
-        createForm={<SirkulasiFormWithRiskAlert fields={fields} />}
-        updateForm={<SirkulasiFormWithRiskAlert fields={fields} isUpdateForm />}
+        createForm={<SirkulasiFormWithRiskAlert fields={scopedFields} isSatker={isSatker} />}
+        updateForm={<SirkulasiFormWithRiskAlert fields={scopedFields} isUpdateForm isSatker={isSatker} />}
         config={config}
       />
     </>

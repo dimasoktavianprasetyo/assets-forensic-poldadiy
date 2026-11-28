@@ -282,6 +282,11 @@ async function createEntity(req, res) {
   }
 
   if (entity === 'sirkulasi') {
+    if (req.user?.role === 'satker') {
+      body.status_pinjam = 'Menunggu Verifikasi';
+      delete body.tgl_kembali_aktual;
+    }
+
     const kodeList = Array.isArray(body.kode_bmn)
       ? body.kode_bmn.filter(Boolean)
       : [body.kode_bmn].filter(Boolean);
@@ -401,6 +406,16 @@ async function updateEntity(req, res) {
 
   const pool = await getPool();
   const body = { ...req.body };
+  if (entity === 'sirkulasi' && req.user?.role === 'satker') {
+    if (body.status_pinjam !== undefined && body.status_pinjam !== 'Menunggu Verifikasi') {
+      return res.status(403).json({
+        success: false,
+        result: null,
+        message: 'Akses ditolak: Role Satker tidak dapat mengubah status menjadi Dipinjam atau Selesai.',
+      });
+    }
+    delete body.tgl_kembali_aktual;
+  }
   if ((entity === 'sirkulasi' || entity === 'pemeliharaan') && req.user?.id_user) {
     body.id_petugas = req.user.id_user;
   }
@@ -424,7 +439,11 @@ async function updateEntity(req, res) {
     await syncAsetStatusOnSirkulasi(pool, rows[0].kode_bmn, rows[0].status_pinjam);
   }
 
-  await logActivity(req.user?.id_user, `Ubah data ${entity} (#${id})`, req);
+  const logMsg =
+    entity === 'sirkulasi' && body.status_pinjam === 'Dipinjam'
+      ? `Verifikasi sirkulasi (#${id}) -> Dipinjam`
+      : `Ubah data ${entity} (#${id})`;
+  await logActivity(req.user?.id_user, logMsg, req);
   return res.status(200).json({ success: true, result: mapRow(entity, rows[0]), message: 'Data berhasil diperbarui' });
 }
 
